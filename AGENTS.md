@@ -235,6 +235,16 @@ Validation requirements:
 
 Do not make `voicepipe` depend on upstream topic selection, editorial status, screening status, or article metadata unless explicitly requested.
 
+## radiopipe Web API Contract
+
+When implementing or changing code that consumes the public radiopipe Web API, treat the OpenAPI document in the radiopipe repository as the source of truth:
+
+```txt
+https://github.com/youhey/radiopipe/blob/main/docs/openapi.yaml
+```
+
+Public Web API request/response shapes should not be changed from the `voicepipe` side unless the task explicitly includes a radiopipe API feature change. If the API contract appears inconsistent with local assumptions, confirm against the OpenAPI document before changing parser structs, validation, or documentation.
+
 ## JSON Schema
 
 Maintain a small JSON Schema for the subset of the `radiopipe` export consumed by `voicepipe`.

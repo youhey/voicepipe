@@ -1,0 +1,21 @@
+{
+  "episode": {
+    "episode_key": "sample-episode",
+    "title": "サンプルエピソード",
+    "language": "ja",
+    "scenario_json": {
+      "sections": [
+        {
+          "type": "opening",
+          "title": "オープニング",
+          "text": "こんにちは。これは voicepipe のサンプル音声です。"
+        },
+        {
+          "type": "topic",
+          "title": "本文",
+          "text": "VOICEVOX Engine と ffmpeg を使って、複数のセクションをひとつの MP3 にまとめます。"
+        }
+      ]
+    }
+  }
+}

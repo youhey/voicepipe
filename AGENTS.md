@@ -264,6 +264,10 @@ Do not bundle VOICEVOX Engine binaries, models, or speaker data into this reposi
 
 VOICEVOX output and character/voice usage may have licensing requirements. Do not claim generated audio is freely usable without confirming the relevant voice library terms.
 
+VOICEVOX Engine is not part of `voicepipe`. Treat it as an external TTS backend.
+
+For local development, keep Docker operations for VOICEVOX Engine in `Makefile` targets such as `make voicevox-up`, `make voicevox-down`, `make voicevox-logs`, and `make voicevox-status`.
+
 ## Audio Rendering
 
 Render section audio as separate WAV files first.
@@ -456,4 +460,3 @@ A tiny pipeline that turns radio-style scripts into narrated audio programs.
 ```
 
 Keep `Radio Narration Rendering` as a useful concept phrase in documentation where it helps explain the project.
-

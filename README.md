@@ -30,17 +30,17 @@ voicepipe is a Radio Narration Rendering pipeline.
 
 It transforms generated radio scripts into narrated audio programs by combining text-to-speech synthesis and audio rendering.
 
-## Phase 1 Goal
+## Current Goal
 
-Phase 1 focuses on the smallest local rendering path:
+The primary recording workflow is:
 
 ```txt
-local Episode JSON -> VOICEVOX section WAVs -> ffmpeg concat -> MP3
+upstream API or local Episode JSON -> VOICEVOX section WAVs -> ffmpeg concat -> MP3
 ```
 
 VOICEVOX Engine is treated as an external TTS backend. voicepipe does not bundle VOICEVOX Engine, voice libraries, models, or Docker images.
 
-Phase 1 does not implement radiopipe API download, upload APIs, S3 storage, result JSON submission, configuration files, multiple TTS providers, BGM/SE mixing, volume normalization, cache-based regeneration skipping, or GUI features.
+voicepipe still does not implement upload APIs, S3 storage, result JSON submission, multiple TTS providers, BGM/SE mixing, volume normalization, cache-based regeneration skipping, or GUI features.
 
 ## Phase 2 Goal
 
@@ -81,7 +81,7 @@ Create local overrides from the example when needed:
 cp voicepipe.sample.toml voicepipe.override.toml
 ```
 
-Start a local VOICEVOX Engine container, render the sample episode, then stop the container:
+Start a local VOICEVOX Engine container, record the sample episode, then stop the container:
 
 ```bash
 make voicevox-up
@@ -90,7 +90,7 @@ make run
 make voicevox-down
 ```
 
-`make run` uses the default configuration stack, `samples/episode.json`, and writes `dist/episode.mp3` by default.
+`make run` records from `samples/episode.json` and writes `dist/episode.mp3` by default.
 `make preview` uses the same `INPUT`, `OUTPUT`, and `WORKDIR` variables as `make run`.
 
 Override paths when needed:
@@ -113,13 +113,33 @@ make preview \
 The underlying CLI command is:
 
 ```bash
-cargo run -- render \
+cargo run -- record \
+  --source json \
   --input ./samples/episode.json \
   --output ./dist/episode.mp3 \
   --workdir ./work/episode
 ```
 
 The command reads `episode.scenario_json.sections[]`, synthesizes each section into a WAV file under the work directory, writes `concat.ffconcat` and `combined.wav`, then encodes the final MP3 with ffmpeg.
+
+Record from an upstream API and save the exact Episode JSON used for recording:
+
+```bash
+cargo run -- record \
+  --source upstream \
+  --output storage/audio/episode.mp3 \
+  --output-json storage/json/episode.json
+```
+
+Override the upstream URL from the command line:
+
+```bash
+cargo run -- record \
+  --source upstream \
+  --url https://example.com/api/episodes/latest \
+  --output storage/audio/episode.mp3 \
+  --output-json storage/json/episode.json
+```
 
 Generate a short preview for tuning:
 
@@ -155,6 +175,14 @@ workdir = "work/episode"
 input = "samples/episode.json"
 output = "dist/preview.mp3"
 workdir = "work/preview"
+
+[upstream]
+episode_url = "https://example.com/api/episodes/latest"
+# access_token = "replace-with-local-token-or-use-env"
+
+[storage]
+json_dir = "storage/json"
+audio_dir = "storage/audio"
 
 [voicevox]
 endpoint = "http://127.0.0.1:50021"
@@ -198,12 +226,57 @@ Later files override earlier files. If none of these files exists, voicepipe exi
 
 If `--config` is specified, voicepipe loads only that file and ignores `voicepipe.toml`, `voicepipe.dist.toml`, and `voicepipe.override.toml`.
 
-## Render Options
+Upstream access tokens are resolved in this order:
+
+```txt
+VOICEPIPE_UPSTREAM_ACCESS_TOKEN
+  ↓
+[upstream].access_token
+```
+
+When a token is configured, `record --source upstream` sends it as an HTTP Bearer token. The token is not printed in logs.
+
+## Record
+
+`record` is the main command for generating a full MP3 audio program.
+
+Local JSON input:
+
+```bash
+cargo run -- record \
+  --source json \
+  --input samples/episode.json \
+  --output storage/audio/episode.mp3
+```
+
+Upstream API input:
+
+```bash
+cargo run -- record \
+  --source upstream \
+  --output storage/audio/episode.mp3 \
+  --output-json storage/json/episode.json
+```
+
+Upstream URL override:
+
+```bash
+cargo run -- record \
+  --source upstream \
+  --url https://example.com/api/episodes/latest \
+  --output storage/audio/episode.mp3 \
+  --output-json storage/json/episode.json
+```
+
+Record options:
 
 - `--config`: configuration file path. If omitted, the default configuration stack is used.
-- `--input`: input Episode JSON file path. Overrides `[render].input`.
-- `--output`: output MP3 file path. Overrides `[render].output`.
-- `--workdir`: working directory for section WAV files and ffmpeg intermediates. Overrides `[render].workdir`; defaults to `./work/<episode_key>` when neither is set.
+- `--source`: required source selector. Supported values are `json` and `upstream`.
+- `--input`: input Episode JSON file path. Required with `--source json`; invalid with `--source upstream`.
+- `--url`: upstream Episode JSON URL. Valid only with `--source upstream`; overrides `[upstream].episode_url`.
+- `--output`: output MP3 path. Defaults to `storage/audio/{episode_key}.mp3`.
+- `--output-json`: optional path to save the Episode JSON used for recording.
+- `--workdir`: working directory for section WAV files and ffmpeg intermediates. Defaults to `./work/<episode_key>`.
 - `--voicevox-endpoint`: VOICEVOX Engine endpoint. Defaults to `http://127.0.0.1:50021`.
 - `--speaker`: VOICEVOX speaker/style ID. Defaults to `3`.
 - `--speed-scale`: VOICEVOX `speedScale`. Defaults to `1.2`.
@@ -211,6 +284,8 @@ If `--config` is specified, voicepipe loads only that file and ignores `voicepip
 - `--intonation-scale`: VOICEVOX `intonationScale`. Defaults to `0.9`.
 - `--pause-length-scale`: VOICEVOX `pauseLengthScale`. Defaults to `1.3`.
 - `--volume-scale`: VOICEVOX `volumeScale`. Defaults to `1.0`.
+
+`render` remains available as a compatibility command for local JSON rendering. New workflows should use `record --source json`.
 
 ## Preview
 
@@ -271,7 +346,7 @@ cargo run -- doctor --config ./voicepipe.sample.toml
 ## Makefile Targets
 
 - `make build`: build the Rust binary
-- `make run`: render `samples/episode.json` into `dist/episode.mp3`
+- `make run`: record `samples/episode.json` into `dist/episode.mp3`
 - `make preview`: render a short preview with `INPUT`, `OUTPUT`, and `WORKDIR`
 - `make speakers`: list VOICEVOX speakers and styles
 - `make doctor`: validate local prerequisites

@@ -60,6 +60,7 @@ lcov.info
 # voicepipe generated audio / render workspaces
 /work/
 /dist/
+/storage/
 /output/
 /outputs/
 /rendered/

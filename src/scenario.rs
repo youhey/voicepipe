@@ -34,8 +34,21 @@ pub fn load(path: &Path) -> Result<ScenarioExport> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("入力 JSON を読み込めません: {}", path.display()))?;
 
-    serde_json::from_str(&source)
+    parse(&source)
         .with_context(|| format!("入力 JSON の形式が正しくありません: {}", path.display()))
+}
+
+pub fn load_source(path: &Path) -> Result<(ScenarioExport, String)> {
+    let source = fs::read_to_string(path)
+        .with_context(|| format!("入力 JSON を読み込めません: {}", path.display()))?;
+    let scenario = parse(&source)
+        .with_context(|| format!("入力 JSON の形式が正しくありません: {}", path.display()))?;
+
+    Ok((scenario, source))
+}
+
+pub fn parse(source: &str) -> Result<ScenarioExport> {
+    serde_json::from_str(source).context("Episode JSON の形式が正しくありません")
 }
 
 pub fn validate(scenario: &ScenarioExport) -> Result<()> {

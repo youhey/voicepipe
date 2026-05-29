@@ -1,16 +1,56 @@
-use std::{fs, io::Read, path::PathBuf};
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use tracing::info;
 
 use crate::{
     audio::{self, DEFAULT_PAUSE_BETWEEN_SECTIONS_MS, RenderPaths},
-    cli::{PreviewArgs, RenderArgs},
+    cli::{PreviewArgs, RecordArgs, RecordSource, RenderArgs},
     config::{self, ConfigOverrides, ResolvedConfig},
     ffmpeg, scenario,
-    scenario::Section,
+    scenario::{ScenarioExport, Section},
+    upstream::UpstreamClient,
     voicevox::VoicevoxClient,
 };
+
+pub async fn record(args: RecordArgs) -> Result<()> {
+    let loaded_config = load_effective_config(args.config.as_deref(), args.config_overrides())?;
+
+    let source = load_record_source(&args, &loaded_config.values).await?;
+    scenario::validate(&source.scenario)?;
+
+    println!("Episode: {}", source.scenario.episode.episode_key);
+
+    if let Some(output_json) = &args.output_json {
+        let output_json = audio::absolute_path(output_json)?;
+        write_json_output(&output_json, &source.raw_json)?;
+        println!("Saving JSON: {}", output_json.display());
+    }
+
+    ffmpeg::ensure_available()?;
+
+    let output = match args.output.as_deref() {
+        Some(path) => audio::absolute_path(path)?,
+        None => default_record_output(&loaded_config.values, &source.scenario.episode.episode_key)?,
+    };
+    let workdir = match args.workdir.as_deref() {
+        Some(path) => audio::absolute_path(path)?,
+        None => audio::default_workdir(&source.scenario.episode.episode_key)?,
+    };
+    let paths = RenderPaths::prepare(workdir, output)?;
+
+    println!("Recording MP3: {}", paths.output.display());
+
+    record_scenario(&loaded_config.values, &paths, &source.scenario).await?;
+
+    println!("Done");
+
+    Ok(())
+}
 
 pub async fn render(args: RenderArgs) -> Result<()> {
     let loaded_config = load_effective_config(args.config.as_deref(), args.config_overrides())?;
@@ -45,6 +85,66 @@ pub async fn render(args: RenderArgs) -> Result<()> {
         "rendering episode"
     );
 
+    record_scenario(&loaded_config.values, &paths, &scenario).await?;
+
+    println!("MP3 を出力しました: {}", paths.output.display());
+
+    Ok(())
+}
+
+struct RecordSourceData {
+    scenario: ScenarioExport,
+    raw_json: String,
+}
+
+async fn load_record_source(
+    args: &RecordArgs,
+    config: &ResolvedConfig,
+) -> Result<RecordSourceData> {
+    match args.source {
+        RecordSource::Json => {
+            if args.url.is_some() {
+                bail!("--source json では --url を指定できません");
+            }
+            let input = args
+                .input
+                .as_deref()
+                .context("--source json では --input を指定してください")?;
+            let input = audio::absolute_path(input)?;
+            println!("Source: json");
+            let (scenario, raw_json) = scenario::load_source(&input)?;
+
+            Ok(RecordSourceData { scenario, raw_json })
+        }
+        RecordSource::Upstream => {
+            if args.input.is_some() {
+                bail!("--source upstream では --input を指定できません");
+            }
+            let url = args
+                .url
+                .as_deref()
+                .or(config.upstream_episode_url.as_deref())
+                .context(
+                    "--source upstream では --url または [upstream].episode_url を指定してください",
+                )?;
+            println!("Source: upstream");
+            println!("Fetching episode JSON: {url}");
+
+            let client = UpstreamClient::new(resolve_upstream_access_token(config));
+            let raw_json = client.fetch_episode_json(url).await?;
+            let scenario =
+                scenario::parse(&raw_json).context("upstream API の JSON を解析できません")?;
+
+            Ok(RecordSourceData { scenario, raw_json })
+        }
+    }
+}
+
+async fn record_scenario(
+    config: &ResolvedConfig,
+    paths: &RenderPaths,
+    scenario: &ScenarioExport,
+) -> Result<()> {
     let sections = scenario
         .episode
         .scenario_json
@@ -52,11 +152,37 @@ pub async fn render(args: RenderArgs) -> Result<()> {
         .iter()
         .map(RenderSection::from_section)
         .collect::<Vec<_>>();
-    render_sections(&loaded_config.values, &paths, &sections).await?;
 
-    println!("MP3 を出力しました: {}", paths.output.display());
+    render_sections(config, paths, &sections).await
+}
 
-    Ok(())
+fn resolve_upstream_access_token(config: &ResolvedConfig) -> Option<String> {
+    std::env::var("VOICEPIPE_UPSTREAM_ACCESS_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty())
+        .or_else(|| config.upstream_access_token.clone())
+}
+
+fn default_record_output(config: &ResolvedConfig, episode_key: &str) -> Result<PathBuf> {
+    let filename = format!("{}.mp3", audio::safe_file_component(episode_key, "episode"));
+    let output = config.storage_audio_dir.join(filename);
+    audio::absolute_path(&output)
+}
+
+fn write_json_output(path: &Path, json: &str) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "JSON 出力ディレクトリを作成できません: {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    fs::write(path, json)
+        .with_context(|| format!("Episode JSON を保存できません: {}", path.display()))
 }
 
 pub async fn preview(args: PreviewArgs) -> Result<()> {
@@ -379,6 +505,53 @@ mod tests {
     }
 
     #[test]
+    fn default_record_output_uses_storage_audio_dir_and_episode_key() {
+        let config = ResolvedConfig {
+            storage_audio_dir: PathBuf::from("custom/audio"),
+            ..ResolvedConfig::default()
+        };
+
+        let output = default_record_output(&config, "episode-001").expect("path should resolve");
+
+        assert!(output.ends_with("custom/audio/episode-001.mp3"));
+    }
+
+    #[tokio::test]
+    async fn record_json_source_rejects_url() {
+        let args = record_args(RecordSource::Json);
+        let args = RecordArgs {
+            url: Some("https://example.com/api/episodes/latest".to_string()),
+            ..args
+        };
+
+        let error = record_source_error(&args, &ResolvedConfig::default()).await;
+
+        assert!(error.to_string().contains("--source json"));
+    }
+
+    #[tokio::test]
+    async fn record_upstream_source_rejects_input() {
+        let args = RecordArgs {
+            input: Some(PathBuf::from("episode.json")),
+            url: Some("https://example.com/api/episodes/latest".to_string()),
+            ..record_args(RecordSource::Upstream)
+        };
+
+        let error = record_source_error(&args, &ResolvedConfig::default()).await;
+
+        assert!(error.to_string().contains("--source upstream"));
+    }
+
+    #[tokio::test]
+    async fn record_upstream_source_requires_url_or_config() {
+        let args = record_args(RecordSource::Upstream);
+
+        let error = record_source_error(&args, &ResolvedConfig::default()).await;
+
+        assert!(error.to_string().contains("[upstream].episode_url"));
+    }
+
+    #[test]
     fn preview_text_requires_exactly_one_input_mode() {
         let args = PreviewArgs {
             config: None,
@@ -399,5 +572,31 @@ mod tests {
         };
 
         assert!(preview_sections_from_args(&args, &ResolvedConfig::default()).is_err());
+    }
+
+    fn record_args(source: RecordSource) -> RecordArgs {
+        RecordArgs {
+            config: None,
+            source,
+            input: None,
+            url: None,
+            output: None,
+            output_json: None,
+            workdir: None,
+            voicevox_endpoint: None,
+            speaker: None,
+            speed_scale: None,
+            pitch_scale: None,
+            intonation_scale: None,
+            pause_length_scale: None,
+            volume_scale: None,
+        }
+    }
+
+    async fn record_source_error(args: &RecordArgs, config: &ResolvedConfig) -> anyhow::Error {
+        match load_record_source(args, config).await {
+            Ok(_) => panic!("record source should fail"),
+            Err(error) => error,
+        }
     }
 }

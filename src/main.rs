@@ -5,6 +5,7 @@ mod doctor;
 mod ffmpeg;
 mod renderer;
 mod scenario;
+mod upstream;
 mod voicevox;
 
 use anyhow::Result;
@@ -18,6 +19,7 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
+        Commands::Record(args) => renderer::record(args).await,
         Commands::Render(args) => renderer::render(args).await,
         Commands::Preview(args) => renderer::preview(args).await,
         Commands::Speakers(args) => voicevox::print_speakers(args).await,

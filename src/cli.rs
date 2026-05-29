@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::config::ConfigOverrides;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "voicepipe",
-    about = "Render radiopipe scenario JSON into narrated audio"
+    about = "Record radiopipe Episode JSON into narrated audio"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -16,7 +16,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Render an episode JSON file into an MP3 file.
+    /// Record an episode from a local JSON file or upstream API into an MP3 file.
+    Record(RecordArgs),
+
+    /// Legacy local JSON rendering command.
     Render(RenderArgs),
 
     /// Render a short MP3 preview for voice tuning.
@@ -27,6 +30,71 @@ pub enum Commands {
 
     /// Validate local rendering prerequisites.
     Doctor(DoctorArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum RecordSource {
+    Upstream,
+    Json,
+}
+
+#[derive(Debug, Args)]
+pub struct RecordArgs {
+    /// Configuration file path. When omitted, the default config stack is used.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+
+    /// Episode JSON source.
+    #[arg(long, value_enum)]
+    pub source: RecordSource,
+
+    /// Input episode JSON path for --source json.
+    #[arg(long)]
+    pub input: Option<PathBuf>,
+
+    /// Upstream episode API URL for --source upstream.
+    #[arg(long)]
+    pub url: Option<String>,
+
+    /// Output MP3 path.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+
+    /// Optional path to save the Episode JSON used for recording.
+    #[arg(long)]
+    pub output_json: Option<PathBuf>,
+
+    /// Working directory for section WAV files and ffmpeg intermediates.
+    #[arg(long)]
+    pub workdir: Option<PathBuf>,
+
+    /// Local VOICEVOX Engine endpoint.
+    #[arg(long)]
+    pub voicevox_endpoint: Option<String>,
+
+    /// VOICEVOX speaker id.
+    #[arg(long)]
+    pub speaker: Option<u32>,
+
+    /// VOICEVOX speedScale.
+    #[arg(long)]
+    pub speed_scale: Option<f64>,
+
+    /// VOICEVOX pitchScale.
+    #[arg(long)]
+    pub pitch_scale: Option<f64>,
+
+    /// VOICEVOX intonationScale.
+    #[arg(long)]
+    pub intonation_scale: Option<f64>,
+
+    /// VOICEVOX pauseLengthScale.
+    #[arg(long)]
+    pub pause_length_scale: Option<f64>,
+
+    /// VOICEVOX volumeScale.
+    #[arg(long)]
+    pub volume_scale: Option<f64>,
 }
 
 #[derive(Debug, Args)]
@@ -167,6 +235,21 @@ pub struct DoctorArgs {
     /// Working directory to check for writability.
     #[arg(long, default_value = "work")]
     pub workdir: PathBuf,
+}
+
+impl RecordArgs {
+    pub fn config_overrides(&self) -> ConfigOverrides {
+        ConfigOverrides {
+            voicevox_endpoint: self.voicevox_endpoint.clone(),
+            speaker: self.speaker,
+            speed_scale: self.speed_scale,
+            pitch_scale: self.pitch_scale,
+            intonation_scale: self.intonation_scale,
+            pause_length_scale: self.pause_length_scale,
+            volume_scale: self.volume_scale,
+            ..ConfigOverrides::default()
+        }
+    }
 }
 
 impl RenderArgs {

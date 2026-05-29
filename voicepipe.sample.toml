@@ -8,6 +8,14 @@ input = "samples/episode.json"
 output = "dist/preview.mp3"
 workdir = "work/preview"
 
+[upstream]
+episode_url = "https://example.com/api/episodes/latest"
+# access_token = "replace-with-local-token-or-use-env"
+
+[storage]
+json_dir = "storage/json"
+audio_dir = "storage/audio"
+
 [voicevox]
 endpoint = "http://127.0.0.1:50021"
 speaker = 3

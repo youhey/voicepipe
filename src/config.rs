@@ -32,6 +32,10 @@ pub struct ResolvedConfig {
     pub preview_input: Option<PathBuf>,
     pub preview_output: Option<PathBuf>,
     pub preview_workdir: Option<PathBuf>,
+    pub upstream_episode_url: Option<String>,
+    pub upstream_access_token: Option<String>,
+    pub storage_json_dir: PathBuf,
+    pub storage_audio_dir: PathBuf,
     pub voicevox_endpoint: String,
     pub speaker: u32,
     pub voice: VoiceOptions,
@@ -57,9 +61,23 @@ pub struct ConfigOverrides {
 struct FileConfig {
     render: Option<FilePathConfig>,
     preview: Option<FilePathConfig>,
+    upstream: Option<FileUpstreamConfig>,
+    storage: Option<FileStorageConfig>,
     voicevox: Option<FileVoicevoxConfig>,
     voice: Option<FileVoiceConfig>,
     audio: Option<FileAudioConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileUpstreamConfig {
+    episode_url: Option<String>,
+    access_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileStorageConfig {
+    json_dir: Option<PathBuf>,
+    audio_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,6 +117,10 @@ impl Default for ResolvedConfig {
             preview_input: None,
             preview_output: None,
             preview_workdir: None,
+            upstream_episode_url: None,
+            upstream_access_token: None,
+            storage_json_dir: PathBuf::from("storage/json"),
+            storage_audio_dir: PathBuf::from("storage/audio"),
             voicevox_endpoint: DEFAULT_VOICEVOX_ENDPOINT.to_string(),
             speaker: DEFAULT_SPEAKER,
             voice: VoiceOptions::default(),
@@ -148,6 +170,16 @@ impl ResolvedConfig {
     pub fn validate(&self) -> Result<()> {
         if self.voicevox_endpoint.trim().is_empty() {
             bail!("voicevox.endpoint は空にできません");
+        }
+        if let Some(url) = &self.upstream_episode_url
+            && url.trim().is_empty()
+        {
+            bail!("upstream.episode_url は空にできません");
+        }
+        if let Some(token) = &self.upstream_access_token
+            && token.trim().is_empty()
+        {
+            bail!("upstream.access_token は空にできません");
         }
         if self.bitrate.trim().is_empty() {
             bail!("audio.bitrate は空にできません");
@@ -199,6 +231,24 @@ impl FileConfig {
 
         if let Some(preview) = self.preview {
             preview.apply_to_preview(resolved);
+        }
+
+        if let Some(upstream) = self.upstream {
+            if let Some(value) = upstream.episode_url {
+                resolved.upstream_episode_url = Some(value);
+            }
+            if let Some(value) = upstream.access_token {
+                resolved.upstream_access_token = Some(value);
+            }
+        }
+
+        if let Some(storage) = self.storage {
+            if let Some(value) = storage.json_dir {
+                resolved.storage_json_dir = value;
+            }
+            if let Some(value) = storage.audio_dir {
+                resolved.storage_audio_dir = value;
+            }
         }
 
         if let Some(voicevox) = self.voicevox {
@@ -312,6 +362,14 @@ mod tests {
             [audio]
             bitrate = "128k"
             format = "mp3"
+
+            [upstream]
+            episode_url = "https://example.com/api/episodes/latest"
+            access_token = "dummy-token"
+
+            [storage]
+            json_dir = "custom/json"
+            audio_dir = "custom/audio"
             "#,
         );
 
@@ -326,6 +384,16 @@ mod tests {
         assert_eq!(parsed.voice.speed_scale, 1.3);
         assert_eq!(parsed.voice.pitch_scale, DEFAULT_PITCH_SCALE);
         assert_eq!(parsed.bitrate, "128k");
+        assert_eq!(
+            parsed.upstream_episode_url,
+            Some("https://example.com/api/episodes/latest".to_string())
+        );
+        assert_eq!(
+            parsed.upstream_access_token,
+            Some("dummy-token".to_string())
+        );
+        assert_eq!(parsed.storage_json_dir, PathBuf::from("custom/json"));
+        assert_eq!(parsed.storage_audio_dir, PathBuf::from("custom/audio"));
     }
 
     #[test]

@@ -14,7 +14,8 @@ build:
 	cargo build
 
 run:
-	cargo run -- render \
+	cargo run -- record \
+		--source json \
 		--input $(INPUT) \
 		--output $(OUTPUT) \
 		--workdir $(WORKDIR)

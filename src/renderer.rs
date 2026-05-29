@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, io::Read, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use tracing::info;
@@ -57,19 +57,11 @@ pub async fn preview(args: PreviewArgs) -> Result<()> {
         bail!("--max-chars-per-section は 1 以上を指定してください");
     }
 
-    let input = audio::absolute_path(&args.input)?;
-    let scenario = scenario::load(&input)?;
-    scenario::validate(&scenario)?;
-
     let loaded_config = load_effective_config(args.config.as_deref(), args.config_overrides())?;
 
     ffmpeg::ensure_available()?;
 
-    let sections = select_preview_sections(
-        &scenario.episode.scenario_json.sections,
-        args.max_sections,
-        args.max_chars_per_section,
-    )?;
+    let sections = preview_sections_from_args(&args)?;
     let output = match args.output {
         Some(path) => audio::absolute_path(&path)?,
         None => audio::absolute_path(&default_preview_output(&loaded_config.values))?,
@@ -82,6 +74,50 @@ pub async fn preview(args: PreviewArgs) -> Result<()> {
     println!("Preview MP3 を出力しました: {}", paths.output.display());
 
     Ok(())
+}
+
+fn preview_sections_from_args(args: &PreviewArgs) -> Result<Vec<RenderSection>> {
+    let mode_count = usize::from(args.input.is_some())
+        + usize::from(args.text.is_some())
+        + usize::from(args.stdin);
+
+    if mode_count != 1 {
+        bail!("preview には --input、--text、--stdin のいずれか 1 つだけを指定してください");
+    }
+
+    if let Some(input) = &args.input {
+        let input = audio::absolute_path(input)?;
+        let scenario = scenario::load(&input)?;
+        scenario::validate(&scenario)?;
+
+        return select_preview_sections(
+            &scenario.episode.scenario_json.sections,
+            args.max_sections,
+            args.max_chars_per_section,
+        );
+    }
+
+    let text = if let Some(text) = &args.text {
+        text.to_string()
+    } else {
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .context("標準入力を読み込めません")?;
+        text
+    };
+
+    let trimmed = trim_preview_text(&text, args.max_chars_per_section);
+    if trimmed.trim().is_empty() {
+        bail!("preview text は空にできません");
+    }
+
+    Ok(vec![RenderSection {
+        section_type: "preview_text".to_string(),
+        title: "Inline Preview".to_string(),
+        text: trimmed,
+        estimated_duration_seconds: None,
+    }])
 }
 
 #[derive(Debug, Clone)]
@@ -296,5 +332,28 @@ mod tests {
         assert_eq!(format_setting(1.2), "120");
         assert_eq!(format_setting(0.05), "005");
         assert_eq!(format_setting(-0.05), "m005");
+    }
+
+    #[test]
+    fn preview_text_requires_exactly_one_input_mode() {
+        let args = PreviewArgs {
+            config: None,
+            input: None,
+            text: None,
+            stdin: false,
+            output: None,
+            workdir: PathBuf::from("work/preview"),
+            max_sections: 3,
+            max_chars_per_section: 300,
+            voicevox_endpoint: None,
+            speaker: None,
+            speed_scale: None,
+            pitch_scale: None,
+            intonation_scale: None,
+            pause_length_scale: None,
+            volume_scale: None,
+        };
+
+        assert!(preview_sections_from_args(&args).is_err());
     }
 }

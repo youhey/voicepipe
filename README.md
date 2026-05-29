@@ -199,6 +199,16 @@ If `--config` is omitted, voicepipe tries `./voicepipe.toml`. If it does not exi
 
 `preview` uses the same Episode JSON, configuration, and voice options as `render`, but it selects a small subset of sections and trims each selected section before synthesis.
 
+Preview supports three input modes. Use exactly one of them:
+
+```bash
+cargo run -- preview --input samples/episode.json
+cargo run -- preview --text "これは読み上げテストです。"
+echo "これは読み上げテストです。" | cargo run -- preview --stdin
+```
+
+`--text` and `--stdin` do not require Episode JSON. They create a temporary single-section preview internally and use the same synthesis and ffmpeg pipeline as Episode JSON preview.
+
 Default section selection:
 
 1. First `opening` section

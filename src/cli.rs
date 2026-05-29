@@ -84,7 +84,15 @@ pub struct PreviewArgs {
 
     /// Input episode JSON exported from radiopipe.
     #[arg(long)]
-    pub input: PathBuf,
+    pub input: Option<PathBuf>,
+
+    /// Inline text to synthesize as a single-section preview.
+    #[arg(long)]
+    pub text: Option<String>,
+
+    /// Read inline preview text from standard input.
+    #[arg(long)]
+    pub stdin: bool,
 
     /// Output preview MP3 path. Defaults to dist/preview_<voice-settings>.mp3.
     #[arg(long)]

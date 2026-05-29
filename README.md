@@ -30,10 +30,23 @@ voicepipe is a Radio Narration Rendering pipeline.
 
 It transforms generated radio scripts into narrated audio programs by combining text-to-speech synthesis and audio rendering.
 
+## Phase 1 Goal
+
+Phase 1 focuses on the smallest local rendering path:
+
+```txt
+local Episode JSON -> VOICEVOX section WAVs -> ffmpeg concat -> MP3
+```
+
+VOICEVOX Engine is treated as an external TTS backend. voicepipe does not bundle VOICEVOX Engine, voice libraries, models, or Docker images.
+
+Phase 1 does not implement radiopipe API download, upload APIs, S3 storage, result JSON submission, configuration files, multiple TTS providers, BGM/SE mixing, volume normalization, cache-based regeneration skipping, or GUI features.
+
 ## Requirements
 
 - Rust toolchain
-- VOICEVOX Engine running locally
+- Docker
+- VOICEVOX Engine running locally or via Docker
 - ffmpeg available from `PATH`
 
 Default VOICEVOX endpoint is `http://127.0.0.1:50021`.
@@ -67,6 +80,11 @@ make run \
   OUTPUT=./dist/episode.mp3 \
   WORKDIR=./work/episode \
   SPEAKER=3 \
+  SPEED_SCALE=1.2 \
+  PITCH_SCALE=0.0 \
+  INTONATION_SCALE=0.9 \
+  PAUSE_LENGTH_SCALE=1.3 \
+  VOLUME_SCALE=1.0 \
   VOICEVOX_ENDPOINT=http://127.0.0.1:50021
 ```
 
@@ -78,10 +96,28 @@ cargo run -- render \
   --output ./dist/episode.mp3 \
   --workdir ./work/episode \
   --voicevox-endpoint http://127.0.0.1:50021 \
-  --speaker 3
+  --speaker 3 \
+  --speed-scale 1.2 \
+  --pitch-scale 0.0 \
+  --intonation-scale 0.9 \
+  --pause-length-scale 1.3 \
+  --volume-scale 1.0
 ```
 
 The command reads `episode.scenario_json.sections[]`, synthesizes each section into a WAV file under the work directory, writes `concat.ffconcat` and `combined.wav`, then encodes the final MP3 with ffmpeg.
+
+## Render Options
+
+- `--input`: input Episode JSON file path. Required.
+- `--output`: output MP3 file path. Required.
+- `--workdir`: working directory for section WAV files and ffmpeg intermediates. Defaults to `./work/<episode_key>`.
+- `--voicevox-endpoint`: VOICEVOX Engine endpoint. Defaults to `http://127.0.0.1:50021`.
+- `--speaker`: VOICEVOX speaker/style ID. Defaults to `3`.
+- `--speed-scale`: VOICEVOX `speedScale`. Defaults to `1.2`.
+- `--pitch-scale`: VOICEVOX `pitchScale`. Defaults to `0.0`.
+- `--intonation-scale`: VOICEVOX `intonationScale`. Defaults to `0.9`.
+- `--pause-length-scale`: VOICEVOX `pauseLengthScale`. Defaults to `1.3`.
+- `--volume-scale`: VOICEVOX `volumeScale`. Defaults to `1.0`.
 
 ## Makefile Targets
 
@@ -114,7 +150,8 @@ voicepipe consumes the rendering subset of the radiopipe episode export:
         {
           "type": "opening",
           "title": "オープニング",
-          "text": "こんにちは。今日のニュースをお届けします。"
+          "text": "こんにちは。今日のニュースをお届けします。",
+          "estimated_duration_seconds": 8
         }
       ]
     }
@@ -127,5 +164,6 @@ Validation rules:
 - `episode.language` must be `ja`
 - `episode.scenario_json.sections` must contain at least one section
 - `sections[].text` must not be empty
+- `sections[].estimated_duration_seconds` is optional in Phase 1
 
 The JSON Schema for the consumed subset is maintained at `docs/radiopipe-episode.schema.json`.

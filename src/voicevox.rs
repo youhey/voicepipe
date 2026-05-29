@@ -3,21 +3,31 @@ use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::{Value, json};
 
+pub const DEFAULT_VOICEVOX_ENDPOINT: &str = "http://127.0.0.1:50021";
+pub const DEFAULT_SPEAKER: u32 = 3;
+pub const DEFAULT_SPEED_SCALE: f64 = 1.2;
+pub const DEFAULT_PITCH_SCALE: f64 = 0.0;
+pub const DEFAULT_INTONATION_SCALE: f64 = 0.9;
+pub const DEFAULT_PAUSE_LENGTH_SCALE: f64 = 1.3;
+pub const DEFAULT_VOLUME_SCALE: f64 = 1.0;
+
 #[derive(Debug, Clone)]
 pub struct VoiceOptions {
     pub speed_scale: f64,
     pub pitch_scale: f64,
     pub intonation_scale: f64,
+    pub pause_length_scale: f64,
     pub volume_scale: f64,
 }
 
 impl Default for VoiceOptions {
     fn default() -> Self {
         Self {
-            speed_scale: 1.0,
-            pitch_scale: 0.0,
-            intonation_scale: 1.0,
-            volume_scale: 1.0,
+            speed_scale: DEFAULT_SPEED_SCALE,
+            pitch_scale: DEFAULT_PITCH_SCALE,
+            intonation_scale: DEFAULT_INTONATION_SCALE,
+            pause_length_scale: DEFAULT_PAUSE_LENGTH_SCALE,
+            volume_scale: DEFAULT_VOLUME_SCALE,
         }
     }
 }
@@ -37,12 +47,12 @@ struct VoicevoxQuery<'a> {
 }
 
 impl VoicevoxClient {
-    pub fn new(endpoint: String, speaker: u32) -> Self {
+    pub fn new(endpoint: String, speaker: u32, voice_options: VoiceOptions) -> Self {
         Self {
             client: reqwest::Client::new(),
             endpoint: endpoint.trim_end_matches('/').to_string(),
             speaker,
-            voice_options: VoiceOptions::default(),
+            voice_options,
         }
     }
 
@@ -133,6 +143,11 @@ impl VoicevoxClient {
             query,
             "intonationScale",
             self.voice_options.intonation_scale,
+        );
+        set_number(
+            query,
+            "pauseLengthScale",
+            self.voice_options.pause_length_scale,
         );
         set_number(query, "volumeScale", self.voice_options.volume_scale);
     }

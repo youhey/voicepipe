@@ -59,7 +59,7 @@ impl RenderPaths {
 
     pub fn segment_path(&self, index: usize, section_type: &str) -> PathBuf {
         self.segments_dir.join(format!(
-            "{:03}-{}.wav",
+            "{:03}_{}.wav",
             index,
             safe_file_component(section_type, "section")
         ))

@@ -7,7 +7,7 @@ use crate::{
     audio::{self, DEFAULT_OUTPUT_BITRATE, DEFAULT_PAUSE_BETWEEN_SECTIONS_MS, RenderPaths},
     cli::RenderArgs,
     ffmpeg, scenario,
-    voicevox::VoicevoxClient,
+    voicevox::{VoiceOptions, VoicevoxClient},
 };
 
 pub async fn render(args: RenderArgs) -> Result<()> {
@@ -24,7 +24,14 @@ pub async fn render(args: RenderArgs) -> Result<()> {
     };
     let paths = RenderPaths::prepare(workdir, output)?;
 
-    let voicevox = VoicevoxClient::new(args.voicevox_endpoint, args.speaker);
+    let voice_options = VoiceOptions {
+        speed_scale: args.speed_scale,
+        pitch_scale: args.pitch_scale,
+        intonation_scale: args.intonation_scale,
+        pause_length_scale: args.pause_length_scale,
+        volume_scale: args.volume_scale,
+    };
+    let voicevox = VoicevoxClient::new(args.voicevox_endpoint, args.speaker, voice_options);
     voicevox.ensure_ready().await?;
 
     info!(
@@ -40,6 +47,7 @@ pub async fn render(args: RenderArgs) -> Result<()> {
             section_index = index,
             section_type = %section.section_type,
             section_title = %section.title,
+            estimated_duration_seconds = section.estimated_duration_seconds,
             "synthesizing section"
         );
 

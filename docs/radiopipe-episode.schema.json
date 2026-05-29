@@ -43,6 +43,10 @@
                   "text": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "estimated_duration_seconds": {
+                    "type": "integer",
+                    "minimum": 0
                   }
                 }
               }

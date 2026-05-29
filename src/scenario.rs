@@ -27,6 +27,7 @@ pub struct Section {
     pub section_type: String,
     pub title: String,
     pub text: String,
+    pub estimated_duration_seconds: Option<u64>,
 }
 
 pub fn load(path: &Path) -> Result<ScenarioExport> {
@@ -81,7 +82,8 @@ mod tests {
                             {
                                 "type": "opening",
                                 "title": "オープニング",
-                                "text": "こんにちは。"
+                                "text": "こんにちは。",
+                                "estimated_duration_seconds": 3
                             }
                         ]
                     }
@@ -93,7 +95,13 @@ mod tests {
 
     #[test]
     fn accepts_valid_scenario() {
-        assert!(validate(&valid_scenario()).is_ok());
+        let scenario = valid_scenario();
+
+        assert!(validate(&scenario).is_ok());
+        assert_eq!(
+            scenario.episode.scenario_json.sections[0].estimated_duration_seconds,
+            Some(3)
+        );
     }
 
     #[test]

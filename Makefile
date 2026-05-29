@@ -7,6 +7,11 @@ INPUT ?= samples/episode.json
 OUTPUT ?= dist/episode.mp3
 WORKDIR ?= work/episode
 SPEAKER ?= 3
+SPEED_SCALE ?= 1.2
+PITCH_SCALE ?= 0.0
+INTONATION_SCALE ?= 0.9
+PAUSE_LENGTH_SCALE ?= 1.3
+VOLUME_SCALE ?= 1.0
 
 .PHONY: build run test audit fmt fmt-check clippy clean check
 .PHONY: voicevox-up voicevox-down voicevox-logs voicevox-status
@@ -20,7 +25,12 @@ run:
 		--output $(OUTPUT) \
 		--workdir $(WORKDIR) \
 		--voicevox-endpoint $(VOICEVOX_ENDPOINT) \
-		--speaker $(SPEAKER)
+		--speaker $(SPEAKER) \
+		--speed-scale $(SPEED_SCALE) \
+		--pitch-scale $(PITCH_SCALE) \
+		--intonation-scale $(INTONATION_SCALE) \
+		--pause-length-scale $(PAUSE_LENGTH_SCALE) \
+		--volume-scale $(VOLUME_SCALE)
 
 test:
 	cargo test
@@ -43,10 +53,14 @@ clean:
 	cargo clean
 
 voicevox-up:
-	docker run --rm -d \
-		--name $(VOICEVOX_CONTAINER) \
-		-p $(VOICEVOX_PORT):50021 \
-		$(VOICEVOX_IMAGE)
+	@if docker ps --filter "name=^/$(VOICEVOX_CONTAINER)$$" --format "{{.Names}}" | grep -qx "$(VOICEVOX_CONTAINER)"; then \
+		echo "$(VOICEVOX_CONTAINER) is already running"; \
+	else \
+		docker run --rm -d \
+			--name $(VOICEVOX_CONTAINER) \
+			-p $(VOICEVOX_PORT):50021 \
+			$(VOICEVOX_IMAGE); \
+	fi
 
 voicevox-down:
 	docker stop $(VOICEVOX_CONTAINER)

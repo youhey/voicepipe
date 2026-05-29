@@ -8,12 +8,14 @@
         {
           "type": "opening",
           "title": "オープニング",
-          "text": "こんにちは。これは voicepipe のサンプル音声です。"
+          "text": "こんにちは。これは voicepipe のサンプル音声です。",
+          "estimated_duration_seconds": 5
         },
         {
           "type": "topic",
           "title": "本文",
-          "text": "VOICEVOX Engine と ffmpeg を使って、複数のセクションをひとつの MP3 にまとめます。"
+          "text": "VOICEVOX Engine と ffmpeg を使って、複数のセクションをひとつの MP3 にまとめます。",
+          "estimated_duration_seconds": 9
         }
       ]
     }

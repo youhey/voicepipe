@@ -75,10 +75,10 @@ make clippy
 make audit
 ```
 
-Create local configuration from the example when needed:
+Create local overrides from the example when needed:
 
 ```bash
-cp voicepipe.example.toml voicepipe.toml
+cp voicepipe.sample.toml voicepipe.override.toml
 ```
 
 Start a local VOICEVOX Engine container, render the sample episode, then stop the container:
@@ -90,40 +90,33 @@ make run
 make voicevox-down
 ```
 
-`make run` uses `voicepipe.example.toml`, `samples/episode.json`, and writes `dist/episode.mp3` by default.
-`make preview` uses the same input and writes `dist/preview.mp3` by default.
+`make run` uses the default configuration stack, `samples/episode.json`, and writes `dist/episode.mp3` by default.
+`make preview` uses the same `INPUT`, `OUTPUT`, and `WORKDIR` variables as `make run`.
 
-Override paths, speaker, or the VOICEVOX endpoint when needed:
+Override paths when needed:
 
 ```bash
 make run \
   INPUT=./episode.json \
   OUTPUT=./dist/episode.mp3 \
-  WORKDIR=./work/episode \
-  SPEAKER=3 \
-  SPEED_SCALE=1.2 \
-  PITCH_SCALE=0.0 \
-  INTONATION_SCALE=0.9 \
-  PAUSE_LENGTH_SCALE=1.3 \
-  VOLUME_SCALE=1.0 \
-  VOICEVOX_ENDPOINT=http://127.0.0.1:50021
+  WORKDIR=./work/episode
+```
+
+For preview output separate from full render output:
+
+```bash
+make preview \
+  OUTPUT=./dist/preview.mp3 \
+  WORKDIR=./work/preview
 ```
 
 The underlying CLI command is:
 
 ```bash
 cargo run -- render \
-  --config ./voicepipe.example.toml \
   --input ./samples/episode.json \
   --output ./dist/episode.mp3 \
-  --workdir ./work/episode \
-  --voicevox-endpoint http://127.0.0.1:50021 \
-  --speaker 3 \
-  --speed-scale 1.2 \
-  --pitch-scale 0.0 \
-  --intonation-scale 0.9 \
-  --pause-length-scale 1.3 \
-  --volume-scale 1.0
+  --workdir ./work/episode
 ```
 
 The command reads `episode.scenario_json.sections[]`, synthesizes each section into a WAV file under the work directory, writes `concat.ffconcat` and `combined.wav`, then encodes the final MP3 with ffmpeg.
@@ -132,7 +125,7 @@ Generate a short preview for tuning:
 
 ```bash
 cargo run -- preview \
-  --config ./voicepipe.example.toml \
+  --config ./voicepipe.sample.toml \
   --input ./samples/episode.json \
   --output ./dist/preview.mp3 \
   --speaker 8 \
@@ -150,9 +143,19 @@ dist/preview_speaker8_speed120_pitch005_intonation100_pause120.mp3
 
 ## Configuration
 
-The local config file is `voicepipe.toml`. It is ignored by git. Use `voicepipe.example.toml` as the committed template.
+The committed template is `voicepipe.sample.toml`. `voicepipe.toml`, `voicepipe.dist.toml`, and `voicepipe.override.toml` are ignored by git. Because the default stack reads `voicepipe.dist.toml` after `voicepipe.toml`, put local overrides in `voicepipe.override.toml` or pass an explicit file with `--config`.
 
 ```toml
+[render]
+input = "samples/episode.json"
+output = "dist/episode.mp3"
+workdir = "work/episode"
+
+[preview]
+input = "samples/episode.json"
+output = "dist/preview.mp3"
+workdir = "work/preview"
+
 [voicevox]
 endpoint = "http://127.0.0.1:50021"
 speaker = 3
@@ -174,19 +177,33 @@ Configuration precedence:
 ```txt
 CLI options
   ↓
-Config file
+voicepipe.override.toml
+  ↓
+voicepipe.dist.toml
+  ↓
+voicepipe.toml
   ↓
 Built-in defaults
 ```
 
-If `--config` is omitted, voicepipe tries `./voicepipe.toml`. If it does not exist, built-in defaults are used.
+If `--config` is omitted, voicepipe loads existing files in this order:
+
+```txt
+voicepipe.toml
+voicepipe.dist.toml
+voicepipe.override.toml
+```
+
+Later files override earlier files. If none of these files exists, voicepipe exits with an error instead of silently using only built-in defaults.
+
+If `--config` is specified, voicepipe loads only that file and ignores `voicepipe.toml`, `voicepipe.dist.toml`, and `voicepipe.override.toml`.
 
 ## Render Options
 
-- `--config`: configuration file path. If omitted, `./voicepipe.toml` is used when present.
-- `--input`: input Episode JSON file path. Required.
-- `--output`: output MP3 file path. Required.
-- `--workdir`: working directory for section WAV files and ffmpeg intermediates. Defaults to `./work/<episode_key>`.
+- `--config`: configuration file path. If omitted, the default configuration stack is used.
+- `--input`: input Episode JSON file path. Overrides `[render].input`.
+- `--output`: output MP3 file path. Overrides `[render].output`.
+- `--workdir`: working directory for section WAV files and ffmpeg intermediates. Overrides `[render].workdir`; defaults to `./work/<episode_key>` when neither is set.
 - `--voicevox-endpoint`: VOICEVOX Engine endpoint. Defaults to `http://127.0.0.1:50021`.
 - `--speaker`: VOICEVOX speaker/style ID. Defaults to `3`.
 - `--speed-scale`: VOICEVOX `speedScale`. Defaults to `1.2`.
@@ -221,7 +238,7 @@ Additional preview options:
 
 - `--max-sections`: maximum number of selected preview sections. Defaults to `3`.
 - `--max-chars-per-section`: maximum text characters per section. Defaults to `300`.
-- `--workdir`: preview work directory. Defaults to `work/preview`.
+- `--workdir`: preview work directory. Overrides `[preview].workdir`; defaults to `work/preview` when neither is set.
 
 Suggested tuning workflow:
 
@@ -233,20 +250,20 @@ cargo run -- preview --input samples/episode.json --speaker 8 --speed-scale 1.2 
 cargo run -- preview --input samples/episode.json --speaker 8 --speed-scale 1.3 --pitch-scale 0.08
 ```
 
-Listen to the generated MP3 files, then copy the chosen values into `voicepipe.toml`.
+Listen to the generated MP3 files, then copy the chosen values into `voicepipe.override.toml` or an explicit config file passed with `--config`.
 
 ## Inspection Commands
 
 List VOICEVOX speakers and styles:
 
 ```bash
-cargo run -- speakers --config ./voicepipe.example.toml
+cargo run -- speakers --config ./voicepipe.sample.toml
 ```
 
 Validate local prerequisites:
 
 ```bash
-cargo run -- doctor --config ./voicepipe.example.toml
+cargo run -- doctor --config ./voicepipe.sample.toml
 ```
 
 `doctor` checks configuration validity, VOICEVOX reachability, ffmpeg availability, and writability of `dist` and `work` by default.
@@ -255,7 +272,7 @@ cargo run -- doctor --config ./voicepipe.example.toml
 
 - `make build`: build the Rust binary
 - `make run`: render `samples/episode.json` into `dist/episode.mp3`
-- `make preview`: render a short preview into `dist/preview.mp3`
+- `make preview`: render a short preview with `INPUT`, `OUTPUT`, and `WORKDIR`
 - `make speakers`: list VOICEVOX speakers and styles
 - `make doctor`: validate local prerequisites
 - `make test`: run Rust tests

@@ -3,18 +3,9 @@ VOICEVOX_IMAGE := voicevox/voicevox_engine:cpu-latest
 VOICEVOX_PORT ?= 50021
 VOICEVOX_ENDPOINT ?= http://127.0.0.1:$(VOICEVOX_PORT)
 
-CONFIG ?= voicepipe.example.toml
 INPUT ?= samples/episode.json
 OUTPUT ?= dist/episode.mp3
-PREVIEW_OUTPUT ?= dist/preview.mp3
 WORKDIR ?= work/episode
-PREVIEW_WORKDIR ?= work/preview
-SPEAKER ?= 3
-SPEED_SCALE ?= 1.2
-PITCH_SCALE ?= 0.0
-INTONATION_SCALE ?= 0.9
-PAUSE_LENGTH_SCALE ?= 1.3
-VOLUME_SCALE ?= 1.0
 
 .PHONY: build run preview speakers doctor test audit fmt fmt-check clippy clean check
 .PHONY: voicevox-up voicevox-down voicevox-logs voicevox-status
@@ -24,37 +15,21 @@ build:
 
 run:
 	cargo run -- render \
-		--config $(CONFIG) \
 		--input $(INPUT) \
 		--output $(OUTPUT) \
-		--workdir $(WORKDIR) \
-		--voicevox-endpoint $(VOICEVOX_ENDPOINT) \
-		--speaker $(SPEAKER) \
-		--speed-scale $(SPEED_SCALE) \
-		--pitch-scale $(PITCH_SCALE) \
-		--intonation-scale $(INTONATION_SCALE) \
-		--pause-length-scale $(PAUSE_LENGTH_SCALE) \
-		--volume-scale $(VOLUME_SCALE)
+		--workdir $(WORKDIR)
 
 preview:
 	cargo run -- preview \
-		--config $(CONFIG) \
 		--input $(INPUT) \
-		--output $(PREVIEW_OUTPUT) \
-		--workdir $(PREVIEW_WORKDIR) \
-		--voicevox-endpoint $(VOICEVOX_ENDPOINT) \
-		--speaker $(SPEAKER) \
-		--speed-scale $(SPEED_SCALE) \
-		--pitch-scale $(PITCH_SCALE) \
-		--intonation-scale $(INTONATION_SCALE) \
-		--pause-length-scale $(PAUSE_LENGTH_SCALE) \
-		--volume-scale $(VOLUME_SCALE)
+		--output $(OUTPUT) \
+		--workdir $(WORKDIR)
 
 speakers:
-	cargo run -- speakers --config $(CONFIG)
+	cargo run -- speakers
 
 doctor:
-	cargo run -- doctor --config $(CONFIG)
+	cargo run -- doctor
 
 test:
 	cargo test

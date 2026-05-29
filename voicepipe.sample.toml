@@ -1,3 +1,13 @@
+[render]
+input = "samples/episode.json"
+output = "dist/episode.mp3"
+workdir = "work/episode"
+
+[preview]
+input = "samples/episode.json"
+output = "dist/preview.mp3"
+workdir = "work/preview"
+
 [voicevox]
 endpoint = "http://127.0.0.1:50021"
 speaker = 3

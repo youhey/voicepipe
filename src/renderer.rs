@@ -13,17 +13,27 @@ use crate::{
 };
 
 pub async fn render(args: RenderArgs) -> Result<()> {
-    let input = audio::absolute_path(&args.input)?;
+    let loaded_config = load_effective_config(args.config.as_deref(), args.config_overrides())?;
+
+    let input = loaded_config
+        .values
+        .render_input
+        .as_deref()
+        .context("--input または [render].input を指定してください")?;
+    let input = audio::absolute_path(input)?;
     let scenario = scenario::load(&input)?;
     scenario::validate(&scenario)?;
 
-    let loaded_config = load_effective_config(args.config.as_deref(), args.config_overrides())?;
-
     ffmpeg::ensure_available()?;
 
-    let output = audio::absolute_path(&args.output)?;
-    let workdir = match args.workdir {
-        Some(path) => audio::absolute_path(&path)?,
+    let output = loaded_config
+        .values
+        .render_output
+        .as_deref()
+        .context("--output または [render].output を指定してください")?;
+    let output = audio::absolute_path(output)?;
+    let workdir = match loaded_config.values.render_workdir.as_deref() {
+        Some(path) => audio::absolute_path(path)?,
         None => audio::default_workdir(&scenario.episode.episode_key)?,
     };
     let paths = RenderPaths::prepare(workdir, output)?;
@@ -61,12 +71,16 @@ pub async fn preview(args: PreviewArgs) -> Result<()> {
 
     ffmpeg::ensure_available()?;
 
-    let sections = preview_sections_from_args(&args)?;
-    let output = match args.output {
-        Some(path) => audio::absolute_path(&path)?,
+    let sections = preview_sections_from_args(&args, &loaded_config.values)?;
+    let output = match loaded_config.values.preview_output.as_deref() {
+        Some(path) => audio::absolute_path(path)?,
         None => audio::absolute_path(&default_preview_output(&loaded_config.values))?,
     };
-    let paths = RenderPaths::prepare(audio::absolute_path(&args.workdir)?, output)?;
+    let workdir = match loaded_config.values.preview_workdir.as_deref() {
+        Some(path) => audio::absolute_path(path)?,
+        None => audio::absolute_path(&PathBuf::from("work/preview"))?,
+    };
+    let paths = RenderPaths::prepare(workdir, output)?;
 
     print_preview_summary(&sections, &loaded_config.values, &paths.output);
     render_sections(&loaded_config.values, &paths, &sections).await?;
@@ -76,25 +90,39 @@ pub async fn preview(args: PreviewArgs) -> Result<()> {
     Ok(())
 }
 
-fn preview_sections_from_args(args: &PreviewArgs) -> Result<Vec<RenderSection>> {
+fn preview_sections_from_args(
+    args: &PreviewArgs,
+    config: &ResolvedConfig,
+) -> Result<Vec<RenderSection>> {
     let mode_count = usize::from(args.input.is_some())
         + usize::from(args.text.is_some())
         + usize::from(args.stdin);
 
-    if mode_count != 1 {
+    if mode_count > 1 {
         bail!("preview には --input、--text、--stdin のいずれか 1 つだけを指定してください");
     }
 
     if let Some(input) = &args.input {
-        let input = audio::absolute_path(input)?;
-        let scenario = scenario::load(&input)?;
-        scenario::validate(&scenario)?;
-
-        return select_preview_sections(
-            &scenario.episode.scenario_json.sections,
+        return preview_sections_from_episode_path(
+            input,
             args.max_sections,
             args.max_chars_per_section,
         );
+    }
+
+    if args.text.is_none()
+        && !args.stdin
+        && let Some(input) = &config.preview_input
+    {
+        return preview_sections_from_episode_path(
+            input,
+            args.max_sections,
+            args.max_chars_per_section,
+        );
+    }
+
+    if mode_count == 0 {
+        bail!("preview には --input、--text、--stdin のいずれか 1 つだけを指定してください");
     }
 
     let text = if let Some(text) = &args.text {
@@ -118,6 +146,22 @@ fn preview_sections_from_args(args: &PreviewArgs) -> Result<Vec<RenderSection>> 
         text: trimmed,
         estimated_duration_seconds: None,
     }])
+}
+
+fn preview_sections_from_episode_path(
+    input: &std::path::Path,
+    max_sections: usize,
+    max_chars_per_section: usize,
+) -> Result<Vec<RenderSection>> {
+    let input = audio::absolute_path(input)?;
+    let scenario = scenario::load(&input)?;
+    scenario::validate(&scenario)?;
+
+    select_preview_sections(
+        &scenario.episode.scenario_json.sections,
+        max_sections,
+        max_chars_per_section,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -342,7 +386,7 @@ mod tests {
             text: None,
             stdin: false,
             output: None,
-            workdir: PathBuf::from("work/preview"),
+            workdir: Some(PathBuf::from("work/preview")),
             max_sections: 3,
             max_chars_per_section: 300,
             voicevox_endpoint: None,
@@ -354,6 +398,6 @@ mod tests {
             volume_scale: None,
         };
 
-        assert!(preview_sections_from_args(&args).is_err());
+        assert!(preview_sections_from_args(&args, &ResolvedConfig::default()).is_err());
     }
 }

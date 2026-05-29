@@ -5,6 +5,8 @@
 config/local.*.toml
 config/*.local.toml
 /voicepipe.toml
+/voicepipe.dist.toml
+/voicepipe.override.toml
 
 # OS files
 .DS_Store

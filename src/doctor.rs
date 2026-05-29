@@ -13,9 +13,16 @@ pub async fn run(args: DoctorArgs) -> Result<()> {
 
     let loaded_config = match load_config(&args) {
         Ok(loaded) => {
-            match &loaded.path {
-                Some(path) => println!("ok: configuration file loaded: {}", path.display()),
-                None => println!("ok: configuration file omitted; using built-in defaults"),
+            if loaded.paths.len() == 1 {
+                println!(
+                    "ok: configuration file loaded: {}",
+                    loaded.paths[0].display()
+                );
+            } else {
+                println!("ok: configuration files loaded:");
+                for path in &loaded.paths {
+                    println!("  - {}", path.display());
+                }
             }
             Some(loaded)
         }

@@ -11,17 +11,27 @@ use crate::{
     voicevox::{DEFAULT_SPEAKER, DEFAULT_VOICEVOX_ENDPOINT, VoiceOptions},
 };
 
-pub const DEFAULT_CONFIG_PATH: &str = "voicepipe.toml";
+pub const CONFIG_STACK: [&str; 3] = [
+    "voicepipe.toml",
+    "voicepipe.dist.toml",
+    "voicepipe.override.toml",
+];
 pub const DEFAULT_AUDIO_FORMAT: &str = "mp3";
 
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     pub values: ResolvedConfig,
-    pub path: Option<PathBuf>,
+    pub paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
+    pub render_input: Option<PathBuf>,
+    pub render_output: Option<PathBuf>,
+    pub render_workdir: Option<PathBuf>,
+    pub preview_input: Option<PathBuf>,
+    pub preview_output: Option<PathBuf>,
+    pub preview_workdir: Option<PathBuf>,
     pub voicevox_endpoint: String,
     pub speaker: u32,
     pub voice: VoiceOptions,
@@ -31,6 +41,9 @@ pub struct ResolvedConfig {
 
 #[derive(Debug, Default)]
 pub struct ConfigOverrides {
+    pub input: Option<PathBuf>,
+    pub output: Option<PathBuf>,
+    pub workdir: Option<PathBuf>,
     pub voicevox_endpoint: Option<String>,
     pub speaker: Option<u32>,
     pub speed_scale: Option<f64>,
@@ -42,9 +55,18 @@ pub struct ConfigOverrides {
 
 #[derive(Debug, Default, Deserialize)]
 struct FileConfig {
+    render: Option<FilePathConfig>,
+    preview: Option<FilePathConfig>,
     voicevox: Option<FileVoicevoxConfig>,
     voice: Option<FileVoiceConfig>,
     audio: Option<FileAudioConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FilePathConfig {
+    input: Option<PathBuf>,
+    output: Option<PathBuf>,
+    workdir: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +93,12 @@ struct FileAudioConfig {
 impl Default for ResolvedConfig {
     fn default() -> Self {
         Self {
+            render_input: None,
+            render_output: None,
+            render_workdir: None,
+            preview_input: None,
+            preview_output: None,
+            preview_workdir: None,
             voicevox_endpoint: DEFAULT_VOICEVOX_ENDPOINT.to_string(),
             speaker: DEFAULT_SPEAKER,
             voice: VoiceOptions::default(),
@@ -82,6 +110,18 @@ impl Default for ResolvedConfig {
 
 impl ResolvedConfig {
     pub fn apply_overrides(&mut self, overrides: ConfigOverrides) {
+        if let Some(value) = overrides.input {
+            self.render_input = Some(value.clone());
+            self.preview_input = Some(value);
+        }
+        if let Some(value) = overrides.output {
+            self.render_output = Some(value.clone());
+            self.preview_output = Some(value);
+        }
+        if let Some(value) = overrides.workdir {
+            self.render_workdir = Some(value.clone());
+            self.preview_workdir = Some(value);
+        }
         if let Some(value) = overrides.voicevox_endpoint {
             self.voicevox_endpoint = value;
         }
@@ -125,9 +165,41 @@ impl ResolvedConfig {
     }
 }
 
+impl FilePathConfig {
+    fn apply_to_render(self, resolved: &mut ResolvedConfig) {
+        if let Some(value) = self.input {
+            resolved.render_input = Some(value);
+        }
+        if let Some(value) = self.output {
+            resolved.render_output = Some(value);
+        }
+        if let Some(value) = self.workdir {
+            resolved.render_workdir = Some(value);
+        }
+    }
+
+    fn apply_to_preview(self, resolved: &mut ResolvedConfig) {
+        if let Some(value) = self.input {
+            resolved.preview_input = Some(value);
+        }
+        if let Some(value) = self.output {
+            resolved.preview_output = Some(value);
+        }
+        if let Some(value) = self.workdir {
+            resolved.preview_workdir = Some(value);
+        }
+    }
+}
+
 impl FileConfig {
-    fn into_resolved(self) -> ResolvedConfig {
-        let mut resolved = ResolvedConfig::default();
+    fn apply_to(self, resolved: &mut ResolvedConfig) {
+        if let Some(render) = self.render {
+            render.apply_to_render(resolved);
+        }
+
+        if let Some(preview) = self.preview {
+            preview.apply_to_preview(resolved);
+        }
 
         if let Some(voicevox) = self.voicevox {
             if let Some(value) = voicevox.endpoint {
@@ -164,39 +236,48 @@ impl FileConfig {
                 resolved.format = value;
             }
         }
-
-        resolved
     }
 }
 
 pub fn load(path: Option<&Path>) -> Result<LoadedConfig> {
-    let selected_path = match path {
-        Some(path) => Some(path.to_path_buf()),
-        None => {
-            let default_path = PathBuf::from(DEFAULT_CONFIG_PATH);
-            default_path.exists().then_some(default_path)
-        }
-    };
-
-    let values = match selected_path.as_deref() {
-        Some(path) => load_file(path)?,
-        None => ResolvedConfig::default(),
-    };
-    values.validate()?;
-
-    Ok(LoadedConfig {
-        values,
-        path: selected_path,
-    })
+    load_with_base(path, Path::new("."))
 }
 
-fn load_file(path: &Path) -> Result<ResolvedConfig> {
+fn load_with_base(path: Option<&Path>, base_dir: &Path) -> Result<LoadedConfig> {
+    let paths = match path {
+        Some(path) => vec![path.to_path_buf()],
+        None => existing_config_stack(base_dir),
+    };
+
+    if paths.is_empty() {
+        bail!(
+            "設定ファイルが見つかりません: {} のいずれかを作成するか --config を指定してください",
+            CONFIG_STACK.join(", ")
+        );
+    }
+
+    let mut values = ResolvedConfig::default();
+    for path in &paths {
+        load_file(path)?.apply_to(&mut values);
+    }
+    values.validate()?;
+
+    Ok(LoadedConfig { values, paths })
+}
+
+fn existing_config_stack(base_dir: &Path) -> Vec<PathBuf> {
+    CONFIG_STACK
+        .iter()
+        .map(|name| base_dir.join(name))
+        .filter(|path| path.exists())
+        .collect()
+}
+
+fn load_file(path: &Path) -> Result<FileConfig> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("設定ファイルを読み込めません: {}", path.display()))?;
-    let file_config = toml::from_str::<FileConfig>(&source)
-        .with_context(|| format!("設定ファイルの TOML を解析できません: {}", path.display()))?;
-
-    Ok(file_config.into_resolved())
+    toml::from_str::<FileConfig>(&source)
+        .with_context(|| format!("設定ファイルの TOML を解析できません: {}", path.display()))
 }
 
 fn validate_scale(name: &str, value: f64) -> Result<()> {
@@ -214,8 +295,13 @@ mod tests {
 
     #[test]
     fn resolves_file_config_over_defaults() {
-        let parsed = toml::from_str::<FileConfig>(
+        let parsed = resolve_toml(
             r#"
+            [render]
+            input = "episode.json"
+            output = "dist/episode.mp3"
+            workdir = "work/episode"
+
             [voicevox]
             endpoint = "http://127.0.0.1:50022"
             speaker = 8
@@ -227,10 +313,14 @@ mod tests {
             bitrate = "128k"
             format = "mp3"
             "#,
-        )
-        .expect("config should parse")
-        .into_resolved();
+        );
 
+        assert_eq!(parsed.render_input, Some(PathBuf::from("episode.json")));
+        assert_eq!(
+            parsed.render_output,
+            Some(PathBuf::from("dist/episode.mp3"))
+        );
+        assert_eq!(parsed.render_workdir, Some(PathBuf::from("work/episode")));
         assert_eq!(parsed.voicevox_endpoint, "http://127.0.0.1:50022");
         assert_eq!(parsed.speaker, 8);
         assert_eq!(parsed.voice.speed_scale, 1.3);
@@ -241,6 +331,9 @@ mod tests {
     #[test]
     fn applies_cli_overrides_over_config_values() {
         let mut config = ResolvedConfig {
+            render_input: Some(PathBuf::from("config-input.json")),
+            render_output: Some(PathBuf::from("config-output.mp3")),
+            render_workdir: Some(PathBuf::from("config-work")),
             voicevox_endpoint: "http://127.0.0.1:50022".to_string(),
             speaker: 8,
             voice: VoiceOptions {
@@ -249,17 +342,131 @@ mod tests {
             },
             bitrate: "128k".to_string(),
             format: "mp3".to_string(),
+            ..ResolvedConfig::default()
         };
 
         config.apply_overrides(ConfigOverrides {
+            input: Some(PathBuf::from("cli-input.json")),
+            output: Some(PathBuf::from("cli-output.mp3")),
+            workdir: Some(PathBuf::from("cli-work")),
             speaker: Some(3),
             speed_scale: Some(1.4),
             ..ConfigOverrides::default()
         });
 
+        assert_eq!(config.render_input, Some(PathBuf::from("cli-input.json")));
+        assert_eq!(config.render_output, Some(PathBuf::from("cli-output.mp3")));
+        assert_eq!(config.render_workdir, Some(PathBuf::from("cli-work")));
         assert_eq!(config.voicevox_endpoint, "http://127.0.0.1:50022");
         assert_eq!(config.speaker, 3);
         assert_eq!(config.voice.speed_scale, 1.4);
         assert_eq!(config.bitrate, "128k");
+    }
+
+    #[test]
+    fn loads_config_stack_in_declared_order() {
+        let temp_dir = unique_temp_dir("voicepipe-config-stack");
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        fs::write(
+            temp_dir.join("voicepipe.toml"),
+            r#"
+            [voicevox]
+            speaker = 2
+
+            [voice]
+            speed_scale = 1.1
+            "#,
+        )
+        .expect("base config should be written");
+        fs::write(
+            temp_dir.join("voicepipe.dist.toml"),
+            r#"
+            [voicevox]
+            speaker = 3
+            "#,
+        )
+        .expect("dist config should be written");
+        fs::write(
+            temp_dir.join("voicepipe.override.toml"),
+            r#"
+            [voice]
+            speed_scale = 1.4
+            "#,
+        )
+        .expect("override config should be written");
+
+        let loaded = load_with_base(None, &temp_dir).expect("stack should load");
+
+        assert_eq!(
+            loaded
+                .paths
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "voicepipe.toml",
+                "voicepipe.dist.toml",
+                "voicepipe.override.toml"
+            ]
+        );
+        assert_eq!(loaded.values.speaker, 3);
+        assert_eq!(loaded.values.voice.speed_scale, 1.4);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn explicit_config_ignores_stack_files() {
+        let temp_dir = unique_temp_dir("voicepipe-explicit-config");
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        fs::write(
+            temp_dir.join("voicepipe.toml"),
+            r#"
+            [voicevox]
+            speaker = 2
+            "#,
+        )
+        .expect("base config should be written");
+        let explicit = temp_dir.join("custom.toml");
+        fs::write(
+            &explicit,
+            r#"
+            [voicevox]
+            speaker = 8
+            "#,
+        )
+        .expect("explicit config should be written");
+
+        let loaded =
+            load_with_base(Some(&explicit), &temp_dir).expect("explicit config should load");
+
+        assert_eq!(loaded.paths, vec![explicit]);
+        assert_eq!(loaded.values.speaker, 8);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn missing_default_config_stack_is_an_error() {
+        let temp_dir = unique_temp_dir("voicepipe-missing-config");
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+
+        let error = load_with_base(None, &temp_dir).expect_err("missing stack should fail");
+
+        assert!(error.to_string().contains("設定ファイルが見つかりません"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    fn resolve_toml(source: &str) -> ResolvedConfig {
+        let mut resolved = ResolvedConfig::default();
+        toml::from_str::<FileConfig>(source)
+            .expect("config should parse")
+            .apply_to(&mut resolved);
+        resolved
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("{}-{}", prefix, std::process::id()))
     }
 }

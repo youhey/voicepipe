@@ -42,6 +42,15 @@ VOICEVOX Engine is treated as an external TTS backend. voicepipe does not bundle
 
 Phase 1 does not implement radiopipe API download, upload APIs, S3 storage, result JSON submission, configuration files, multiple TTS providers, BGM/SE mixing, volume normalization, cache-based regeneration skipping, or GUI features.
 
+## Phase 2 Goal
+
+Phase 2 adds local configuration and operational inspection commands while keeping rendering local-only:
+
+- `voicepipe.toml` configuration loading
+- CLI > config file > built-in default precedence
+- `voicepipe speakers` for VOICEVOX speaker/style inspection
+- `voicepipe doctor` for local environment validation
+
 ## Requirements
 
 - Rust toolchain
@@ -62,6 +71,12 @@ make clippy
 make audit
 ```
 
+Create local configuration from the example when needed:
+
+```bash
+cp voicepipe.example.toml voicepipe.toml
+```
+
 Start a local VOICEVOX Engine container, render the sample episode, then stop the container:
 
 ```bash
@@ -70,7 +85,7 @@ make run
 make voicevox-down
 ```
 
-`make run` uses `samples/episode.json` and writes `dist/episode.mp3` by default.
+`make run` uses `voicepipe.example.toml`, `samples/episode.json`, and writes `dist/episode.mp3` by default.
 
 Override paths, speaker, or the VOICEVOX endpoint when needed:
 
@@ -92,6 +107,7 @@ The underlying CLI command is:
 
 ```bash
 cargo run -- render \
+  --config ./voicepipe.example.toml \
   --input ./samples/episode.json \
   --output ./dist/episode.mp3 \
   --workdir ./work/episode \
@@ -106,8 +122,42 @@ cargo run -- render \
 
 The command reads `episode.scenario_json.sections[]`, synthesizes each section into a WAV file under the work directory, writes `concat.ffconcat` and `combined.wav`, then encodes the final MP3 with ffmpeg.
 
+## Configuration
+
+The local config file is `voicepipe.toml`. It is ignored by git. Use `voicepipe.example.toml` as the committed template.
+
+```toml
+[voicevox]
+endpoint = "http://127.0.0.1:50021"
+speaker = 3
+
+[voice]
+speed_scale = 1.2
+pitch_scale = 0.0
+intonation_scale = 0.9
+pause_length_scale = 1.3
+volume_scale = 1.0
+
+[audio]
+bitrate = "192k"
+format = "mp3"
+```
+
+Configuration precedence:
+
+```txt
+CLI options
+  ↓
+Config file
+  ↓
+Built-in defaults
+```
+
+If `--config` is omitted, voicepipe tries `./voicepipe.toml`. If it does not exist, built-in defaults are used.
+
 ## Render Options
 
+- `--config`: configuration file path. If omitted, `./voicepipe.toml` is used when present.
 - `--input`: input Episode JSON file path. Required.
 - `--output`: output MP3 file path. Required.
 - `--workdir`: working directory for section WAV files and ffmpeg intermediates. Defaults to `./work/<episode_key>`.
@@ -119,10 +169,28 @@ The command reads `episode.scenario_json.sections[]`, synthesizes each section i
 - `--pause-length-scale`: VOICEVOX `pauseLengthScale`. Defaults to `1.3`.
 - `--volume-scale`: VOICEVOX `volumeScale`. Defaults to `1.0`.
 
+## Inspection Commands
+
+List VOICEVOX speakers and styles:
+
+```bash
+cargo run -- speakers --config ./voicepipe.example.toml
+```
+
+Validate local prerequisites:
+
+```bash
+cargo run -- doctor --config ./voicepipe.example.toml
+```
+
+`doctor` checks configuration validity, VOICEVOX reachability, ffmpeg availability, and writability of `dist` and `work` by default.
+
 ## Makefile Targets
 
 - `make build`: build the Rust binary
 - `make run`: render `samples/episode.json` into `dist/episode.mp3`
+- `make speakers`: list VOICEVOX speakers and styles
+- `make doctor`: validate local prerequisites
 - `make test`: run Rust tests
 - `make fmt`: format Rust code
 - `make fmt-check`: check Rust formatting

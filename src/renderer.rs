@@ -4,16 +4,22 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use crate::{
-    audio::{self, DEFAULT_OUTPUT_BITRATE, DEFAULT_PAUSE_BETWEEN_SECTIONS_MS, RenderPaths},
+    audio::{self, DEFAULT_PAUSE_BETWEEN_SECTIONS_MS, RenderPaths},
     cli::RenderArgs,
-    ffmpeg, scenario,
-    voicevox::{VoiceOptions, VoicevoxClient},
+    config, ffmpeg, scenario,
+    voicevox::VoicevoxClient,
 };
 
 pub async fn render(args: RenderArgs) -> Result<()> {
     let input = audio::absolute_path(&args.input)?;
     let scenario = scenario::load(&input)?;
     scenario::validate(&scenario)?;
+
+    let mut loaded_config = config::load(args.config.as_deref())?;
+    loaded_config
+        .values
+        .apply_overrides(args.config_overrides());
+    loaded_config.values.validate()?;
 
     ffmpeg::ensure_available()?;
 
@@ -24,14 +30,11 @@ pub async fn render(args: RenderArgs) -> Result<()> {
     };
     let paths = RenderPaths::prepare(workdir, output)?;
 
-    let voice_options = VoiceOptions {
-        speed_scale: args.speed_scale,
-        pitch_scale: args.pitch_scale,
-        intonation_scale: args.intonation_scale,
-        pause_length_scale: args.pause_length_scale,
-        volume_scale: args.volume_scale,
-    };
-    let voicevox = VoicevoxClient::new(args.voicevox_endpoint, args.speaker, voice_options);
+    let voicevox = VoicevoxClient::new(
+        loaded_config.values.voicevox_endpoint.clone(),
+        loaded_config.values.speaker,
+        loaded_config.values.voice.clone(),
+    );
     voicevox.ensure_ready().await?;
 
     info!(
@@ -64,7 +67,11 @@ pub async fn render(args: RenderArgs) -> Result<()> {
 
     write_concat_file(&paths, &segment_paths)?;
     ffmpeg::concatenate_wav(&paths.workdir)?;
-    ffmpeg::encode_mp3(&paths.combined_wav, &paths.output, DEFAULT_OUTPUT_BITRATE)?;
+    ffmpeg::encode_mp3(
+        &paths.combined_wav,
+        &paths.output,
+        &loaded_config.values.bitrate,
+    )?;
 
     println!("MP3 を出力しました: {}", paths.output.display());
 

@@ -1,7 +1,9 @@
 use anyhow::{Context, Error, Result, anyhow, bail};
 use reqwest::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use crate::{cli::VoicevoxArgs, config};
 
 pub const DEFAULT_VOICEVOX_ENDPOINT: &str = "http://127.0.0.1:50021";
 pub const DEFAULT_SPEAKER: u32 = 3;
@@ -46,6 +48,18 @@ struct VoicevoxQuery<'a> {
     speaker: u32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Speaker {
+    pub name: String,
+    pub styles: Vec<SpeakerStyle>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpeakerStyle {
+    pub name: String,
+    pub id: u32,
+}
+
 impl VoicevoxClient {
     pub fn new(endpoint: String, speaker: u32, voice_options: VoiceOptions) -> Self {
         Self {
@@ -84,6 +98,25 @@ impl VoicevoxClient {
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
         let audio_query = self.audio_query(text).await?;
         self.synthesis(&audio_query).await
+    }
+
+    pub async fn speakers(&self) -> Result<Vec<Speaker>> {
+        let response = self
+            .client
+            .get(self.url("/speakers"))
+            .send()
+            .await
+            .map_err(|error| anyhow!("VOICEVOX Engine の speakers に接続できません: {}", error))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(voicevox_status_error("speakers", status, response).await);
+        }
+
+        response
+            .json::<Vec<Speaker>>()
+            .await
+            .context("VOICEVOX speakers の JSON を解析できません")
     }
 
     async fn audio_query(&self, text: &str) -> Result<Value> {
@@ -193,4 +226,26 @@ fn summarize_body(body: &str) -> String {
         .chars()
         .take(1000)
         .collect()
+}
+
+pub async fn print_speakers(args: VoicevoxArgs) -> Result<()> {
+    let mut loaded = config::load(args.config.as_deref())?;
+    loaded.values.apply_overrides(args.config_overrides());
+    loaded.values.validate()?;
+
+    let client = VoicevoxClient::new(
+        loaded.values.voicevox_endpoint,
+        loaded.values.speaker,
+        loaded.values.voice,
+    );
+    let speakers = client.speakers().await?;
+
+    for speaker in speakers {
+        println!("{}", speaker.name);
+        for style in speaker.styles {
+            println!("  - {}: {}", style.id, style.name);
+        }
+    }
+
+    Ok(())
 }

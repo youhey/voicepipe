@@ -1,5 +1,7 @@
 mod audio;
 mod cli;
+mod config;
+mod doctor;
 mod ffmpeg;
 mod renderer;
 mod scenario;
@@ -17,5 +19,7 @@ async fn main() -> Result<()> {
 
     match Cli::parse().command {
         Commands::Render(args) => renderer::render(args).await,
+        Commands::Speakers(args) => voicevox::print_speakers(args).await,
+        Commands::Doctor(args) => doctor::run(args).await,
     }
 }

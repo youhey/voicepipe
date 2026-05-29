@@ -4,6 +4,7 @@
 !.env.example
 config/local.*.toml
 config/*.local.toml
+/voicepipe.toml
 
 # OS files
 .DS_Store

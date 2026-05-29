@@ -51,6 +51,10 @@ Phase 2 adds local configuration and operational inspection commands while keepi
 - `voicepipe speakers` for VOICEVOX speaker/style inspection
 - `voicepipe doctor` for local environment validation
 
+## Phase 3 Goal
+
+Phase 3 adds `voicepipe preview` for faster voice tuning. Preview renders only a few short sections from an Episode JSON, so speaker and voice parameters can be adjusted without waiting for a full episode render.
+
 ## Requirements
 
 - Rust toolchain
@@ -81,11 +85,13 @@ Start a local VOICEVOX Engine container, render the sample episode, then stop th
 
 ```bash
 make voicevox-up
+make preview
 make run
 make voicevox-down
 ```
 
 `make run` uses `voicepipe.example.toml`, `samples/episode.json`, and writes `dist/episode.mp3` by default.
+`make preview` uses the same input and writes `dist/preview.mp3` by default.
 
 Override paths, speaker, or the VOICEVOX endpoint when needed:
 
@@ -121,6 +127,26 @@ cargo run -- render \
 ```
 
 The command reads `episode.scenario_json.sections[]`, synthesizes each section into a WAV file under the work directory, writes `concat.ffconcat` and `combined.wav`, then encodes the final MP3 with ffmpeg.
+
+Generate a short preview for tuning:
+
+```bash
+cargo run -- preview \
+  --config ./voicepipe.example.toml \
+  --input ./samples/episode.json \
+  --output ./dist/preview.mp3 \
+  --speaker 8 \
+  --speed-scale 1.2 \
+  --pitch-scale 0.05 \
+  --intonation-scale 1.0 \
+  --pause-length-scale 1.2
+```
+
+If `--output` is omitted, preview writes to a generated file under `dist/`, such as:
+
+```txt
+dist/preview_speaker8_speed120_pitch005_intonation100_pause120.mp3
+```
 
 ## Configuration
 
@@ -169,6 +195,36 @@ If `--config` is omitted, voicepipe tries `./voicepipe.toml`. If it does not exi
 - `--pause-length-scale`: VOICEVOX `pauseLengthScale`. Defaults to `1.3`.
 - `--volume-scale`: VOICEVOX `volumeScale`. Defaults to `1.0`.
 
+## Preview
+
+`preview` uses the same Episode JSON, configuration, and voice options as `render`, but it selects a small subset of sections and trims each selected section before synthesis.
+
+Default section selection:
+
+1. First `opening` section
+2. First `topic` section
+3. First `closing` section
+
+Missing section types are skipped. Preview succeeds as long as at least one section is selected.
+
+Additional preview options:
+
+- `--max-sections`: maximum number of selected preview sections. Defaults to `3`.
+- `--max-chars-per-section`: maximum text characters per section. Defaults to `300`.
+- `--workdir`: preview work directory. Defaults to `work/preview`.
+
+Suggested tuning workflow:
+
+```bash
+make voicevox-up
+
+cargo run -- preview --input samples/episode.json --speaker 8 --speed-scale 1.1 --pitch-scale 0.00
+cargo run -- preview --input samples/episode.json --speaker 8 --speed-scale 1.2 --pitch-scale 0.05
+cargo run -- preview --input samples/episode.json --speaker 8 --speed-scale 1.3 --pitch-scale 0.08
+```
+
+Listen to the generated MP3 files, then copy the chosen values into `voicepipe.toml`.
+
 ## Inspection Commands
 
 List VOICEVOX speakers and styles:
@@ -189,6 +245,7 @@ cargo run -- doctor --config ./voicepipe.example.toml
 
 - `make build`: build the Rust binary
 - `make run`: render `samples/episode.json` into `dist/episode.mp3`
+- `make preview`: render a short preview into `dist/preview.mp3`
 - `make speakers`: list VOICEVOX speakers and styles
 - `make doctor`: validate local prerequisites
 - `make test`: run Rust tests

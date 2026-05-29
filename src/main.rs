@@ -19,6 +19,7 @@ async fn main() -> Result<()> {
 
     match Cli::parse().command {
         Commands::Render(args) => renderer::render(args).await,
+        Commands::Preview(args) => renderer::preview(args).await,
         Commands::Speakers(args) => voicevox::print_speakers(args).await,
         Commands::Doctor(args) => doctor::run(args).await,
     }

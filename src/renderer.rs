@@ -1,12 +1,14 @@
 use std::{fs, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tracing::info;
 
 use crate::{
     audio::{self, DEFAULT_PAUSE_BETWEEN_SECTIONS_MS, RenderPaths},
-    cli::RenderArgs,
-    config, ffmpeg, scenario,
+    cli::{PreviewArgs, RenderArgs},
+    config::{self, ConfigOverrides, ResolvedConfig},
+    ffmpeg, scenario,
+    scenario::Section,
     voicevox::VoicevoxClient,
 };
 
@@ -15,11 +17,7 @@ pub async fn render(args: RenderArgs) -> Result<()> {
     let scenario = scenario::load(&input)?;
     scenario::validate(&scenario)?;
 
-    let mut loaded_config = config::load(args.config.as_deref())?;
-    loaded_config
-        .values
-        .apply_overrides(args.config_overrides());
-    loaded_config.values.validate()?;
+    let loaded_config = load_effective_config(args.config.as_deref(), args.config_overrides())?;
 
     ffmpeg::ensure_available()?;
 
@@ -30,13 +28,6 @@ pub async fn render(args: RenderArgs) -> Result<()> {
     };
     let paths = RenderPaths::prepare(workdir, output)?;
 
-    let voicevox = VoicevoxClient::new(
-        loaded_config.values.voicevox_endpoint.clone(),
-        loaded_config.values.speaker,
-        loaded_config.values.voice.clone(),
-    );
-    voicevox.ensure_ready().await?;
-
     info!(
         episode_key = %scenario.episode.episode_key,
         episode_title = %scenario.episode.title,
@@ -44,8 +35,99 @@ pub async fn render(args: RenderArgs) -> Result<()> {
         "rendering episode"
     );
 
+    let sections = scenario
+        .episode
+        .scenario_json
+        .sections
+        .iter()
+        .map(RenderSection::from_section)
+        .collect::<Vec<_>>();
+    render_sections(&loaded_config.values, &paths, &sections).await?;
+
+    println!("MP3 を出力しました: {}", paths.output.display());
+
+    Ok(())
+}
+
+pub async fn preview(args: PreviewArgs) -> Result<()> {
+    if args.max_sections == 0 {
+        bail!("--max-sections は 1 以上を指定してください");
+    }
+    if args.max_chars_per_section == 0 {
+        bail!("--max-chars-per-section は 1 以上を指定してください");
+    }
+
+    let input = audio::absolute_path(&args.input)?;
+    let scenario = scenario::load(&input)?;
+    scenario::validate(&scenario)?;
+
+    let loaded_config = load_effective_config(args.config.as_deref(), args.config_overrides())?;
+
+    ffmpeg::ensure_available()?;
+
+    let sections = select_preview_sections(
+        &scenario.episode.scenario_json.sections,
+        args.max_sections,
+        args.max_chars_per_section,
+    )?;
+    let output = match args.output {
+        Some(path) => audio::absolute_path(&path)?,
+        None => audio::absolute_path(&default_preview_output(&loaded_config.values))?,
+    };
+    let paths = RenderPaths::prepare(audio::absolute_path(&args.workdir)?, output)?;
+
+    print_preview_summary(&sections, &loaded_config.values, &paths.output);
+    render_sections(&loaded_config.values, &paths, &sections).await?;
+
+    println!("Preview MP3 を出力しました: {}", paths.output.display());
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct RenderSection {
+    section_type: String,
+    title: String,
+    text: String,
+    estimated_duration_seconds: Option<u64>,
+}
+
+impl RenderSection {
+    fn from_section(section: &Section) -> Self {
+        Self {
+            section_type: section.section_type.clone(),
+            title: section.title.clone(),
+            text: section.text.trim().to_string(),
+            estimated_duration_seconds: section.estimated_duration_seconds,
+        }
+    }
+}
+
+fn load_effective_config(
+    path: Option<&std::path::Path>,
+    overrides: ConfigOverrides,
+) -> Result<config::LoadedConfig> {
+    let mut loaded_config = config::load(path)?;
+    loaded_config.values.apply_overrides(overrides);
+    loaded_config.values.validate()?;
+
+    Ok(loaded_config)
+}
+
+async fn render_sections(
+    config: &ResolvedConfig,
+    paths: &RenderPaths,
+    sections: &[RenderSection],
+) -> Result<()> {
+    let voicevox = VoicevoxClient::new(
+        config.voicevox_endpoint.clone(),
+        config.speaker,
+        config.voice.clone(),
+    );
+    voicevox.ensure_ready().await?;
+
     let mut segment_paths = Vec::new();
-    for (index, section) in scenario.episode.scenario_json.sections.iter().enumerate() {
+    for (index, section) in sections.iter().enumerate() {
         info!(
             section_index = index,
             section_type = %section.section_type,
@@ -65,17 +147,99 @@ pub async fn render(args: RenderArgs) -> Result<()> {
         ffmpeg::create_silence(&paths.silence_wav, DEFAULT_PAUSE_BETWEEN_SECTIONS_MS)?;
     }
 
-    write_concat_file(&paths, &segment_paths)?;
+    write_concat_file(paths, &segment_paths)?;
     ffmpeg::concatenate_wav(&paths.workdir)?;
-    ffmpeg::encode_mp3(
-        &paths.combined_wav,
-        &paths.output,
-        &loaded_config.values.bitrate,
-    )?;
+    ffmpeg::encode_mp3(&paths.combined_wav, &paths.output, &config.bitrate)
+}
 
-    println!("MP3 を出力しました: {}", paths.output.display());
+fn select_preview_sections(
+    sections: &[Section],
+    max_sections: usize,
+    max_chars_per_section: usize,
+) -> Result<Vec<RenderSection>> {
+    let mut selected = Vec::new();
 
-    Ok(())
+    for section_type in ["opening", "topic", "closing"] {
+        if selected.len() >= max_sections {
+            break;
+        }
+
+        if let Some(section) = sections
+            .iter()
+            .find(|section| section.section_type == section_type)
+        {
+            let mut preview_section = RenderSection::from_section(section);
+            preview_section.text = trim_preview_text(&preview_section.text, max_chars_per_section);
+            selected.push(preview_section);
+        }
+    }
+
+    if selected.is_empty() {
+        bail!("preview 対象の section が見つかりません");
+    }
+
+    Ok(selected)
+}
+
+fn trim_preview_text(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let limited = trimmed.chars().take(max_chars).collect::<String>();
+    let boundary = limited
+        .char_indices()
+        .filter(|(_, character)| matches!(character, '。' | '！' | '？'))
+        .map(|(index, character)| index + character.len_utf8())
+        .next_back();
+
+    match boundary {
+        Some(index) => limited[..index].to_string(),
+        None => limited,
+    }
+}
+
+fn default_preview_output(config: &ResolvedConfig) -> PathBuf {
+    PathBuf::from("dist").join(format!(
+        "preview_speaker{}_speed{}_pitch{}_intonation{}_pause{}.mp3",
+        config.speaker,
+        format_setting(config.voice.speed_scale),
+        format_setting(config.voice.pitch_scale),
+        format_setting(config.voice.intonation_scale),
+        format_setting(config.voice.pause_length_scale),
+    ))
+}
+
+fn format_setting(value: f64) -> String {
+    let scaled = (value * 100.0).round() as i64;
+    if scaled < 0 {
+        format!("m{:03}", scaled.abs())
+    } else {
+        format!("{scaled:03}")
+    }
+}
+
+fn print_preview_summary(
+    sections: &[RenderSection],
+    config: &ResolvedConfig,
+    output: &std::path::Path,
+) {
+    println!("Preview sections:");
+    for section in sections {
+        println!("- {}: {}", section.section_type, section.title);
+    }
+    println!();
+    println!("Voice settings:");
+    println!("speaker={}", config.speaker);
+    println!("speedScale={}", config.voice.speed_scale);
+    println!("pitchScale={}", config.voice.pitch_scale);
+    println!("intonationScale={}", config.voice.intonation_scale);
+    println!("pauseLengthScale={}", config.voice.pause_length_scale);
+    println!("volumeScale={}", config.voice.volume_scale);
+    println!();
+    println!("Output:");
+    println!("{}", output.display());
 }
 
 fn write_concat_file(paths: &RenderPaths, segment_paths: &[PathBuf]) -> Result<()> {
@@ -108,4 +272,29 @@ fn relative_to_workdir<'a>(
     path: &'a std::path::Path,
 ) -> &'a std::path::Path {
     path.strip_prefix(&paths.workdir).unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_preview_text_prefers_japanese_sentence_boundary() {
+        assert_eq!(
+            trim_preview_text("一文目です。二文目です。三文目です。", 10),
+            "一文目です。"
+        );
+    }
+
+    #[test]
+    fn trim_preview_text_falls_back_to_character_count() {
+        assert_eq!(trim_preview_text("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn format_setting_uses_hundred_scaled_padded_values() {
+        assert_eq!(format_setting(1.2), "120");
+        assert_eq!(format_setting(0.05), "005");
+        assert_eq!(format_setting(-0.05), "m005");
+    }
 }

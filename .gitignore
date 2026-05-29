@@ -1,0 +1,91 @@
+# Environment / local overrides
+.env
+.env.*
+!.env.example
+config/local.*.toml
+config/*.local.toml
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+~*
+.vimsessions
+/.idea/
+*.iml
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings.example.json
+
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Rust tool caches / coverage
+/.cargo-audit/
+/.tarpaulin/
+/coverage/
+*.profraw
+*.profdata
+lcov.info
+
+# Local temporary / backup files
+/tmp/
+/temp/
+*.tmp
+*.temp
+*.bak
+*.bk
+*.orig
+*.rej
+
+# Logs
+*.log
+/logs/
+
+# Local binaries / scratch
+/.bin/
+
+# voicepipe generated audio / render workspaces
+/work/
+/dist/
+/output/
+/outputs/
+/rendered/
+/renders/
+/cache/
+/.voicepipe/
+
+# Generated audio files
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.ogg
+
+# ffmpeg intermediate files
+*.concat.txt
+*.ffconcat
+*.pcm
+
+# Local input fixtures that may contain private/generated episode content
+/input/
+/inputs/
+/fixtures/local/
+/samples/local/
+
+# VOICEVOX local runtime files
+/voicevox_engine/
+/voicevox-engine/
+
+# Vagrant
+/.vagrant/

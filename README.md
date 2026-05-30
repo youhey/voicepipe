@@ -127,6 +127,7 @@ Record from an upstream API and save the exact Episode JSON used for recording:
 ```bash
 cargo run -- record \
   --source upstream \
+  --url https://example.com/api/episodes/latest \
   --output storage/audio/episode.mp3 \
   --output-json storage/json/episode.json
 ```
@@ -139,6 +140,24 @@ cargo run -- record \
   --url https://example.com/api/episodes/latest \
   --output storage/audio/episode.mp3 \
   --output-json storage/json/episode.json
+```
+
+Run the full upstream-to-downstream workflow:
+
+```bash
+cargo run -- onair
+```
+
+Limit processing to one discovered episode:
+
+```bash
+cargo run -- onair --limit 1
+```
+
+Preview discovery without download, recording, upload, or ledger writes:
+
+```bash
+cargo run -- onair --dry-run
 ```
 
 Generate a short preview for tuning:
@@ -177,10 +196,14 @@ output = "dist/preview.mp3"
 workdir = "work/preview"
 
 [upstream]
-episode_url = "https://example.com/api/episodes/latest"
+episode_url = "https://example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
 
+[downstream]
+upload_url = "https://example.com/api/episodes"
+
 [storage]
+database = "storage/voicepipe.sqlite"
 json_dir = "storage/json"
 audio_dir = "storage/audio"
 
@@ -234,7 +257,46 @@ VOICEPIPE_UPSTREAM_ACCESS_TOKEN
 [upstream].access_token
 ```
 
-When a token is configured, `record --source upstream` sends it as an HTTP Bearer token. The token is not printed in logs.
+When a token is configured, `record --source upstream` and `onair` send it as an HTTP Bearer token to upstream. The token is not printed in logs.
+
+For `onair`, `[upstream].episode_url` should point to the episode index endpoint, such as `/api/episodes`. For standalone `record --source upstream`, pass `--url` when you want to use a detail or latest endpoint such as `/api/episodes/latest`.
+
+## Onair
+
+`onair` orchestrates the full local processing workflow:
+
+```txt
+upstream -> Episode JSON -> record MP3 -> downstream upload -> SQLite ledger
+```
+
+It uses:
+
+- `GET [upstream].episode_url` to discover completed episodes
+- `GET [upstream].episode_url/{episode_key}` to download each Episode JSON
+- `storage/json/{episode_key}.json` for local JSON persistence
+- `storage/audio/{episode_key}.mp3` for recorded audio
+- `POST [downstream].upload_url` to upload audio, Episode JSON, and render metadata
+- `storage/voicepipe.sqlite` to track processing state
+
+Basic usage:
+
+```bash
+cargo run -- onair
+```
+
+Process only the first discovered unprocessed episode:
+
+```bash
+cargo run -- onair --limit 1
+```
+
+Discovery only:
+
+```bash
+cargo run -- onair --dry-run
+```
+
+The SQLite ledger table is `episodes`. Uploaded episodes are considered processed and skipped on later runs. Failures are stored with `status = failed` and an `error_message`, and processing continues with the remaining episodes.
 
 ## Record
 
@@ -254,6 +316,7 @@ Upstream API input:
 ```bash
 cargo run -- record \
   --source upstream \
+  --url https://example.com/api/episodes/latest \
   --output storage/audio/episode.mp3 \
   --output-json storage/json/episode.json
 ```
@@ -347,6 +410,7 @@ cargo run -- doctor --config ./voicepipe.sample.toml
 
 - `make build`: build the Rust binary
 - `make run`: record `samples/episode.json` into `dist/episode.mp3`
+- `make onair`: run the upstream-to-downstream orchestration workflow
 - `make preview`: render a short preview with `INPUT`, `OUTPUT`, and `WORKDIR`
 - `make speakers`: list VOICEVOX speakers and styles
 - `make doctor`: validate local prerequisites

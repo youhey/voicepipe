@@ -1,5 +1,16 @@
 use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct EpisodeIndexResponse {
+    pub episodes: Vec<EpisodeIndexItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EpisodeIndexItem {
+    pub episode_key: String,
+}
 
 pub struct UpstreamClient {
     client: reqwest::Client,
@@ -14,7 +25,29 @@ impl UpstreamClient {
         }
     }
 
+    pub async fn list_episodes(&self, url: &str) -> Result<Vec<EpisodeIndexItem>> {
+        let response = self
+            .send_get(url)
+            .await
+            .context("upstream episode 一覧を取得できません")?;
+
+        response
+            .json::<EpisodeIndexResponse>()
+            .await
+            .context("upstream episode 一覧 JSON を解析できません")
+            .map(|index| index.episodes)
+    }
+
     pub async fn fetch_episode_json(&self, url: &str) -> Result<String> {
+        let response = self.send_get(url).await?;
+
+        response
+            .text()
+            .await
+            .context("upstream API のレスポンス本文を読み込めません")
+    }
+
+    async fn send_get(&self, url: &str) -> Result<reqwest::Response> {
         let mut request = self.client.get(url);
         if let Some(token) = self.access_token.as_deref() {
             request = request.bearer_auth(token);
@@ -30,10 +63,7 @@ impl UpstreamClient {
             return Err(upstream_status_error(status, response).await);
         }
 
-        response
-            .text()
-            .await
-            .context("upstream API のレスポンス本文を読み込めません")
+        Ok(response)
     }
 }
 

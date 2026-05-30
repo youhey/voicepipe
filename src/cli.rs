@@ -16,6 +16,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Discover upstream episodes, record audio, upload downstream, and track state.
+    Onair(OnAirArgs),
+
     /// Record an episode from a local JSON file or upstream API into an MP3 file.
     Record(RecordArgs),
 
@@ -36,6 +39,49 @@ pub enum Commands {
 pub enum RecordSource {
     Upstream,
     Json,
+}
+
+#[derive(Debug, Args)]
+pub struct OnAirArgs {
+    /// Configuration file path. When omitted, the default config stack is used.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+
+    /// Maximum number of discovered episodes to process.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// Discover unprocessed episodes without download, recording, upload, or ledger writes.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Local VOICEVOX Engine endpoint.
+    #[arg(long)]
+    pub voicevox_endpoint: Option<String>,
+
+    /// VOICEVOX speaker id.
+    #[arg(long)]
+    pub speaker: Option<u32>,
+
+    /// VOICEVOX speedScale.
+    #[arg(long)]
+    pub speed_scale: Option<f64>,
+
+    /// VOICEVOX pitchScale.
+    #[arg(long)]
+    pub pitch_scale: Option<f64>,
+
+    /// VOICEVOX intonationScale.
+    #[arg(long)]
+    pub intonation_scale: Option<f64>,
+
+    /// VOICEVOX pauseLengthScale.
+    #[arg(long)]
+    pub pause_length_scale: Option<f64>,
+
+    /// VOICEVOX volumeScale.
+    #[arg(long)]
+    pub volume_scale: Option<f64>,
 }
 
 #[derive(Debug, Args)]
@@ -235,6 +281,21 @@ pub struct DoctorArgs {
     /// Working directory to check for writability.
     #[arg(long, default_value = "work")]
     pub workdir: PathBuf,
+}
+
+impl OnAirArgs {
+    pub fn config_overrides(&self) -> ConfigOverrides {
+        ConfigOverrides {
+            voicevox_endpoint: self.voicevox_endpoint.clone(),
+            speaker: self.speaker,
+            speed_scale: self.speed_scale,
+            pitch_scale: self.pitch_scale,
+            intonation_scale: self.intonation_scale,
+            pause_length_scale: self.pause_length_scale,
+            volume_scale: self.volume_scale,
+            ..ConfigOverrides::default()
+        }
+    }
 }
 
 impl RecordArgs {

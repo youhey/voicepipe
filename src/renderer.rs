@@ -156,6 +156,16 @@ async fn record_scenario(
     render_sections(config, paths, &sections).await
 }
 
+pub(crate) async fn render_scenario_to_mp3(
+    config: &ResolvedConfig,
+    scenario: &ScenarioExport,
+    output: PathBuf,
+    workdir: PathBuf,
+) -> Result<()> {
+    let paths = RenderPaths::prepare(workdir, output)?;
+    record_scenario(config, &paths, scenario).await
+}
+
 fn resolve_upstream_access_token(config: &ResolvedConfig) -> Option<String> {
     std::env::var("VOICEPIPE_UPSTREAM_ACCESS_TOKEN")
         .ok()

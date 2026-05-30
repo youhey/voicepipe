@@ -9,10 +9,14 @@ output = "dist/preview.mp3"
 workdir = "work/preview"
 
 [upstream]
-episode_url = "https://example.com/api/episodes/latest"
+episode_url = "https://example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
 
+[downstream]
+upload_url = "https://example.com/api/episodes"
+
 [storage]
+database = "storage/voicepipe.sqlite"
 json_dir = "storage/json"
 audio_dir = "storage/audio"
 

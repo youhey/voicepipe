@@ -34,6 +34,8 @@ pub struct ResolvedConfig {
     pub preview_workdir: Option<PathBuf>,
     pub upstream_episode_url: Option<String>,
     pub upstream_access_token: Option<String>,
+    pub downstream_upload_url: Option<String>,
+    pub storage_database: PathBuf,
     pub storage_json_dir: PathBuf,
     pub storage_audio_dir: PathBuf,
     pub voicevox_endpoint: String,
@@ -62,6 +64,7 @@ struct FileConfig {
     render: Option<FilePathConfig>,
     preview: Option<FilePathConfig>,
     upstream: Option<FileUpstreamConfig>,
+    downstream: Option<FileDownstreamConfig>,
     storage: Option<FileStorageConfig>,
     voicevox: Option<FileVoicevoxConfig>,
     voice: Option<FileVoiceConfig>,
@@ -75,7 +78,13 @@ struct FileUpstreamConfig {
 }
 
 #[derive(Debug, Deserialize)]
+struct FileDownstreamConfig {
+    upload_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FileStorageConfig {
+    database: Option<PathBuf>,
     json_dir: Option<PathBuf>,
     audio_dir: Option<PathBuf>,
 }
@@ -119,6 +128,8 @@ impl Default for ResolvedConfig {
             preview_workdir: None,
             upstream_episode_url: None,
             upstream_access_token: None,
+            downstream_upload_url: None,
+            storage_database: PathBuf::from("storage/voicepipe.sqlite"),
             storage_json_dir: PathBuf::from("storage/json"),
             storage_audio_dir: PathBuf::from("storage/audio"),
             voicevox_endpoint: DEFAULT_VOICEVOX_ENDPOINT.to_string(),
@@ -181,6 +192,11 @@ impl ResolvedConfig {
         {
             bail!("upstream.access_token は空にできません");
         }
+        if let Some(url) = &self.downstream_upload_url
+            && url.trim().is_empty()
+        {
+            bail!("downstream.upload_url は空にできません");
+        }
         if self.bitrate.trim().is_empty() {
             bail!("audio.bitrate は空にできません");
         }
@@ -242,7 +258,16 @@ impl FileConfig {
             }
         }
 
+        if let Some(downstream) = self.downstream
+            && let Some(value) = downstream.upload_url
+        {
+            resolved.downstream_upload_url = Some(value);
+        }
+
         if let Some(storage) = self.storage {
+            if let Some(value) = storage.database {
+                resolved.storage_database = value;
+            }
             if let Some(value) = storage.json_dir {
                 resolved.storage_json_dir = value;
             }
@@ -367,7 +392,11 @@ mod tests {
             episode_url = "https://example.com/api/episodes/latest"
             access_token = "dummy-token"
 
+            [downstream]
+            upload_url = "https://example.com/api/episodes"
+
             [storage]
+            database = "custom/voicepipe.sqlite"
             json_dir = "custom/json"
             audio_dir = "custom/audio"
             "#,
@@ -391,6 +420,14 @@ mod tests {
         assert_eq!(
             parsed.upstream_access_token,
             Some("dummy-token".to_string())
+        );
+        assert_eq!(
+            parsed.downstream_upload_url,
+            Some("https://example.com/api/episodes".to_string())
+        );
+        assert_eq!(
+            parsed.storage_database,
+            PathBuf::from("custom/voicepipe.sqlite")
         );
         assert_eq!(parsed.storage_json_dir, PathBuf::from("custom/json"));
         assert_eq!(parsed.storage_audio_dir, PathBuf::from("custom/audio"));

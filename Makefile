@@ -7,7 +7,7 @@ INPUT ?= samples/episode.json
 OUTPUT ?= dist/episode.mp3
 WORKDIR ?= work/episode
 
-.PHONY: build run preview speakers doctor test audit fmt fmt-check clippy clean check
+.PHONY: build run onair preview speakers doctor test audit fmt fmt-check clippy clean check
 .PHONY: voicevox-up voicevox-down voicevox-logs voicevox-status
 
 build:
@@ -19,6 +19,9 @@ run:
 		--input $(INPUT) \
 		--output $(OUTPUT) \
 		--workdir $(WORKDIR)
+
+onair:
+	cargo run -- onair
 
 preview:
 	cargo run -- preview \

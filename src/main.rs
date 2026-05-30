@@ -2,7 +2,10 @@ mod audio;
 mod cli;
 mod config;
 mod doctor;
+mod downstream;
 mod ffmpeg;
+mod ledger;
+mod onair;
 mod renderer;
 mod scenario;
 mod upstream;
@@ -19,6 +22,7 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
+        Commands::Onair(args) => onair::run(args).await,
         Commands::Record(args) => renderer::record(args).await,
         Commands::Render(args) => renderer::render(args).await,
         Commands::Preview(args) => renderer::preview(args).await,

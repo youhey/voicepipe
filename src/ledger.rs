@@ -222,10 +222,10 @@ mod tests {
             .upsert_pending("episode-001")
             .expect("pending should update");
         ledger
-            .mark_fetched("episode-001", Path::new("storage/json/episode-001.json"))
+            .mark_fetched("episode-001", Path::new("dist/json/episode-001.json"))
             .expect("fetched should update");
         ledger
-            .mark_recorded("episode-001", Path::new("storage/audio/episode-001.mp3"))
+            .mark_recorded("episode-001", Path::new("dist/record/episode-001.mp3"))
             .expect("recorded should update");
         ledger
             .mark_uploaded("episode-001")

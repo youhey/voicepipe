@@ -1,11 +1,11 @@
 [render]
 input = "samples/episode.json"
-output = "dist/episode.mp3"
-workdir = "work/episode"
+output = "dist/record/episode.mp3"
+workdir = "work/record/episode"
 
 [preview]
 input = "samples/episode.json"
-output = "dist/preview.mp3"
+output = "dist/preview/preview.mp3"
 workdir = "work/preview"
 
 [upstream]
@@ -15,10 +15,16 @@ episode_url = "https://example.com/api/episodes"
 [downstream]
 upload_url = "https://example.com/api/episodes"
 
+[onair]
+database = "dist/onair/onair.sqlite"
+episodes_dir = "dist/onair/episodes"
+work_dir = "work/onair"
+
 [storage]
-database = "storage/voicepipe.sqlite"
-json_dir = "storage/json"
-audio_dir = "storage/audio"
+root_dir = "dist"
+json_dir = "dist/json"
+audio_dir = "dist/record"
+preview_dir = "dist/preview"
 
 [voicevox]
 endpoint = "http://127.0.0.1:50021"

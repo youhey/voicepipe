@@ -2,9 +2,11 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
+use serde_json::json;
 
 use crate::{
     audio,
@@ -49,9 +51,7 @@ pub async fn run(args: OnAirArgs) -> Result<()> {
         return Ok(());
     }
 
-    let ledger = Ledger::open(&audio::absolute_path(
-        &loaded_config.values.storage_database,
-    )?)?;
+    let ledger = Ledger::open(&audio::absolute_path(&loaded_config.values.onair_database)?)?;
     let uploaded = ledger
         .uploaded_episode_keys()?
         .into_iter()
@@ -123,15 +123,32 @@ async fn process_episode(
     let scenario = scenario::parse(&raw_json).context("Episode JSON を解析できません")?;
     scenario::validate(&scenario)?;
 
-    let json_path = storage_json_path(config, &episode.episode_key)?;
+    let episode_dir = onair_episode_dir(config, &episode.episode_key)?;
+    fs::create_dir_all(&episode_dir).with_context(|| {
+        format!(
+            "onair episode ディレクトリを作成できません: {}",
+            episode_dir.display()
+        )
+    })?;
+
+    let json_path = episode_dir.join("episode.json");
     write_file(&json_path, raw_json.as_bytes(), "Episode JSON")?;
     ledger.mark_fetched(&episode.episode_key, &json_path)?;
 
-    let audio_path = storage_audio_path(config, &episode.episode_key)?;
-    let workdir = audio::default_workdir(&episode.episode_key)?;
+    let audio_path = episode_dir.join("audio.mp3");
+    let workdir = onair_work_dir(config, &episode.episode_key)?;
     println!("Recording MP3: {}", audio_path.display());
     renderer::render_scenario_to_mp3(config, &scenario, audio_path.clone(), workdir).await?;
     ledger.mark_recorded(&episode.episode_key, &audio_path)?;
+
+    let render_metadata_path = episode_dir.join("render_metadata.json");
+    write_render_metadata(
+        config,
+        &episode.episode_key,
+        &json_path,
+        &audio_path,
+        &render_metadata_path,
+    )?;
 
     println!("Uploading downstream: {upload_url}");
     downstream
@@ -153,17 +170,14 @@ fn episode_detail_url(index_url: &str, episode_key: &str) -> String {
     format!("{}/{}", index_url.trim_end_matches('/'), episode_key)
 }
 
-fn storage_json_path(config: &ResolvedConfig, episode_key: &str) -> Result<PathBuf> {
-    let filename = format!(
-        "{}.json",
-        audio::safe_file_component(episode_key, "episode")
-    );
-    audio::absolute_path(&config.storage_json_dir.join(filename))
+fn onair_episode_dir(config: &ResolvedConfig, episode_key: &str) -> Result<PathBuf> {
+    let directory = audio::safe_file_component(episode_key, "episode");
+    audio::absolute_path(&config.onair_episodes_dir.join(directory))
 }
 
-fn storage_audio_path(config: &ResolvedConfig, episode_key: &str) -> Result<PathBuf> {
-    let filename = format!("{}.mp3", audio::safe_file_component(episode_key, "episode"));
-    audio::absolute_path(&config.storage_audio_dir.join(filename))
+fn onair_work_dir(config: &ResolvedConfig, episode_key: &str) -> Result<PathBuf> {
+    let directory = audio::safe_file_component(episode_key, "episode");
+    audio::absolute_path(&config.onair_work_dir.join(directory))
 }
 
 fn write_file(path: &Path, bytes: &[u8], label: &str) -> Result<()> {
@@ -176,6 +190,43 @@ fn write_file(path: &Path, bytes: &[u8], label: &str) -> Result<()> {
     }
 
     fs::write(path, bytes).with_context(|| format!("{label} を保存できません: {}", path.display()))
+}
+
+fn write_render_metadata(
+    config: &ResolvedConfig,
+    episode_key: &str,
+    json_path: &Path,
+    audio_path: &Path,
+    metadata_path: &Path,
+) -> Result<()> {
+    let generated_at_unix_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("現在時刻を取得できません")?
+        .as_secs();
+    let metadata = json!({
+        "episode_key": episode_key,
+        "generated_at_unix_seconds": generated_at_unix_seconds,
+        "voicepipe_version": env!("CARGO_PKG_VERSION"),
+        "json_path": json_path.display().to_string(),
+        "audio_path": audio_path.display().to_string(),
+        "voicevox_endpoint": config.voicevox_endpoint,
+        "speaker": config.speaker,
+        "voice": {
+            "speed_scale": config.voice.speed_scale,
+            "pitch_scale": config.voice.pitch_scale,
+            "intonation_scale": config.voice.intonation_scale,
+            "pause_length_scale": config.voice.pause_length_scale,
+            "volume_scale": config.voice.volume_scale
+        },
+        "audio": {
+            "bitrate": config.bitrate,
+            "format": config.format
+        }
+    });
+    let content =
+        serde_json::to_vec_pretty(&metadata).context("render metadata を JSON 化できません")?;
+
+    write_file(metadata_path, &content, "render metadata")
 }
 
 #[cfg(test)]
@@ -193,20 +244,20 @@ mod tests {
     #[test]
     fn storage_paths_use_configured_directories() {
         let config = ResolvedConfig {
-            storage_json_dir: PathBuf::from("custom/json"),
-            storage_audio_dir: PathBuf::from("custom/audio"),
+            onair_episodes_dir: PathBuf::from("custom/dist/onair/episodes"),
+            onair_work_dir: PathBuf::from("custom/work/onair"),
             ..ResolvedConfig::default()
         };
 
         assert!(
-            storage_json_path(&config, "episode-001")
-                .expect("json path")
-                .ends_with("custom/json/episode-001.json")
+            onair_episode_dir(&config, "episode-001")
+                .expect("episode dir")
+                .ends_with("custom/dist/onair/episodes/episode-001")
         );
         assert!(
-            storage_audio_path(&config, "episode-001")
-                .expect("audio path")
-                .ends_with("custom/audio/episode-001.mp3")
+            onair_work_dir(&config, "episode-001")
+                .expect("work dir")
+                .ends_with("custom/work/onair/episode-001")
         );
     }
 }

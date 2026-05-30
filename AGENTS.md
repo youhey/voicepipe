@@ -155,7 +155,7 @@ Initial command shape:
 ```bash
 voicepipe render \
   --input ./episode.json \
-  --output ./dist/episode.mp3 \
+  --output ./dist/record/episode.mp3 \
   --config ./config/voicepipe.toml
 ```
 
@@ -174,6 +174,38 @@ Useful options:
 ```
 
 Do not require interactive prompts for normal operation.
+
+## Generated Directory Policy
+
+Generated runtime data must use `dist/` and `work/` by default.
+
+This includes:
+
+- `dist/`: final output artifacts and persistent local artifacts.
+- `work/`: temporary and intermediate render files.
+- `target/`: Cargo build artifacts.
+
+Do not introduce new default generated data under `storage/`.
+
+The `onair` workflow must use this default layout:
+
+```txt
+dist/
+  onair/
+    onair.sqlite
+    episodes/
+      {episode_key}/
+        episode.json
+        audio.mp3
+        render_metadata.json
+
+work/
+  onair/
+    {episode_key}/
+```
+
+Configuration or CLI options may override paths, but repository defaults and README examples should prefer `dist/` for final artifacts and `work/` for intermediates.
+Legacy local files under `storage/` may remain ignored, but new defaults should not write there.
 
 ## Configuration
 
@@ -293,7 +325,7 @@ Prefer deterministic file names based on section order, section type, and a shor
 Suggested workdir layout:
 
 ```txt
-work/<episode_key>/
+work/record/<episode_key>/
   segments/
     000-opening-<hash>.wav
     001-topic-<hash>.wav
@@ -304,7 +336,7 @@ work/<episode_key>/
   render-plan.json
 ```
 
-Do not commit generated audio or work directories.
+Do not commit generated audio, persistent generated artifacts, or work directories.
 
 ## Caching
 

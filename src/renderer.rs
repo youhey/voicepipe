@@ -417,7 +417,7 @@ fn trim_preview_text(text: &str, max_chars: usize) -> String {
 }
 
 fn default_preview_output(config: &ResolvedConfig) -> PathBuf {
-    PathBuf::from("dist").join(format!(
+    config.storage_preview_dir.join(format!(
         "preview_speaker{}_speed{}_pitch{}_intonation{}_pause{}.mp3",
         config.speaker,
         format_setting(config.voice.speed_scale),
@@ -517,13 +517,25 @@ mod tests {
     #[test]
     fn default_record_output_uses_storage_audio_dir_and_episode_key() {
         let config = ResolvedConfig {
-            storage_audio_dir: PathBuf::from("custom/audio"),
+            storage_audio_dir: PathBuf::from("custom/dist/record"),
             ..ResolvedConfig::default()
         };
 
         let output = default_record_output(&config, "episode-001").expect("path should resolve");
 
-        assert!(output.ends_with("custom/audio/episode-001.mp3"));
+        assert!(output.ends_with("custom/dist/record/episode-001.mp3"));
+    }
+
+    #[test]
+    fn default_preview_output_uses_storage_preview_dir() {
+        let config = ResolvedConfig {
+            storage_preview_dir: PathBuf::from("custom/dist/preview"),
+            ..ResolvedConfig::default()
+        };
+
+        assert!(default_preview_output(&config).ends_with(
+            "custom/dist/preview/preview_speaker3_speed120_pitch000_intonation090_pause130.mp3"
+        ));
     }
 
     #[tokio::test]

@@ -90,24 +90,24 @@ make run
 make voicevox-down
 ```
 
-`make run` records from `samples/episode.json` and writes `dist/episode.mp3` by default.
-`make preview` uses the same `INPUT`, `OUTPUT`, and `WORKDIR` variables as `make run`.
+`make run` records from `samples/episode.json` and writes `dist/record/episode.mp3` by default.
+`make preview` writes `dist/preview/preview.mp3` by default. It shares `INPUT` with `make run`, and uses `PREVIEW_OUTPUT` and `PREVIEW_WORKDIR` for preview-specific paths.
 
 Override paths when needed:
 
 ```bash
 make run \
   INPUT=./episode.json \
-  OUTPUT=./dist/episode.mp3 \
-  WORKDIR=./work/episode
+  OUTPUT=./dist/record/episode.mp3 \
+  WORKDIR=./work/record/episode
 ```
 
 For preview output separate from full render output:
 
 ```bash
 make preview \
-  OUTPUT=./dist/preview.mp3 \
-  WORKDIR=./work/preview
+  PREVIEW_OUTPUT=./dist/preview/preview.mp3 \
+  PREVIEW_WORKDIR=./work/preview
 ```
 
 The underlying CLI command is:
@@ -116,8 +116,8 @@ The underlying CLI command is:
 cargo run -- record \
   --source json \
   --input ./samples/episode.json \
-  --output ./dist/episode.mp3 \
-  --workdir ./work/episode
+  --output ./dist/record/episode.mp3 \
+  --workdir ./work/record/episode
 ```
 
 The command reads `episode.scenario_json.sections[]`, synthesizes each section into a WAV file under the work directory, writes `concat.ffconcat` and `combined.wav`, then encodes the final MP3 with ffmpeg.
@@ -128,8 +128,8 @@ Record from an upstream API and save the exact Episode JSON used for recording:
 cargo run -- record \
   --source upstream \
   --url https://example.com/api/episodes/latest \
-  --output storage/audio/episode.mp3 \
-  --output-json storage/json/episode.json
+  --output dist/record/episode.mp3 \
+  --output-json dist/json/episode.json
 ```
 
 Override the upstream URL from the command line:
@@ -138,8 +138,8 @@ Override the upstream URL from the command line:
 cargo run -- record \
   --source upstream \
   --url https://example.com/api/episodes/latest \
-  --output storage/audio/episode.mp3 \
-  --output-json storage/json/episode.json
+  --output dist/record/episode.mp3 \
+  --output-json dist/json/episode.json
 ```
 
 Run the full upstream-to-downstream workflow:
@@ -166,7 +166,7 @@ Generate a short preview for tuning:
 cargo run -- preview \
   --config ./voicepipe.sample.toml \
   --input ./samples/episode.json \
-  --output ./dist/preview.mp3 \
+  --output ./dist/preview/preview.mp3 \
   --speaker 8 \
   --speed-scale 1.2 \
   --pitch-scale 0.05 \
@@ -174,10 +174,10 @@ cargo run -- preview \
   --pause-length-scale 1.2
 ```
 
-If `--output` is omitted, preview writes to a generated file under `dist/`, such as:
+If `--output` is omitted, preview writes to a generated file under `dist/preview/`, such as:
 
 ```txt
-dist/preview_speaker8_speed120_pitch005_intonation100_pause120.mp3
+dist/preview/preview_speaker8_speed120_pitch005_intonation100_pause120.mp3
 ```
 
 ## Configuration
@@ -187,12 +187,12 @@ The committed template is `voicepipe.sample.toml`. `voicepipe.toml`, `voicepipe.
 ```toml
 [render]
 input = "samples/episode.json"
-output = "dist/episode.mp3"
-workdir = "work/episode"
+output = "dist/record/episode.mp3"
+workdir = "work/record/episode"
 
 [preview]
 input = "samples/episode.json"
-output = "dist/preview.mp3"
+output = "dist/preview/preview.mp3"
 workdir = "work/preview"
 
 [upstream]
@@ -202,10 +202,16 @@ episode_url = "https://example.com/api/episodes"
 [downstream]
 upload_url = "https://example.com/api/episodes"
 
+[onair]
+database = "dist/onair/onair.sqlite"
+episodes_dir = "dist/onair/episodes"
+work_dir = "work/onair"
+
 [storage]
-database = "storage/voicepipe.sqlite"
-json_dir = "storage/json"
-audio_dir = "storage/audio"
+root_dir = "dist"
+json_dir = "dist/json"
+audio_dir = "dist/record"
+preview_dir = "dist/preview"
 
 [voicevox]
 endpoint = "http://127.0.0.1:50021"
@@ -222,6 +228,8 @@ volume_scale = 1.0
 bitrate = "192k"
 format = "mp3"
 ```
+
+The `[storage]` section name is kept for configuration compatibility. Its default paths now point to `dist/`; new generated files should not default to `storage/`.
 
 Configuration precedence:
 
@@ -273,10 +281,12 @@ It uses:
 
 - `GET [upstream].episode_url` to discover completed episodes
 - `GET [upstream].episode_url/{episode_key}` to download each Episode JSON
-- `storage/json/{episode_key}.json` for local JSON persistence
-- `storage/audio/{episode_key}.mp3` for recorded audio
+- `dist/onair/episodes/{episode_key}/episode.json` for local JSON persistence
+- `dist/onair/episodes/{episode_key}/audio.mp3` for recorded audio
+- `dist/onair/episodes/{episode_key}/render_metadata.json` for render metadata
+- `work/onair/{episode_key}/` for intermediate WAV and ffmpeg files
 - `POST [downstream].upload_url` to upload audio, Episode JSON, and render metadata
-- `storage/voicepipe.sqlite` to track processing state
+- `dist/onair/onair.sqlite` to track processing state
 
 Basic usage:
 
@@ -298,6 +308,22 @@ cargo run -- onair --dry-run
 
 The SQLite ledger table is `episodes`. Uploaded episodes are considered processed and skipped on later runs. Failures are stored with `status = failed` and an `error_message`, and processing continues with the remaining episodes.
 
+Default `onair` output layout:
+
+```txt
+dist/
+  onair/
+    onair.sqlite
+    episodes/
+      {episode_key}/
+        episode.json
+        audio.mp3
+        render_metadata.json
+```
+
+Intermediate files for `onair` are written under `work/onair/{episode_key}/`.
+Older local generated files under `storage/` are not migrated automatically and can be removed manually if they are no longer needed.
+
 ## Record
 
 `record` is the main command for generating a full MP3 audio program.
@@ -308,7 +334,7 @@ Local JSON input:
 cargo run -- record \
   --source json \
   --input samples/episode.json \
-  --output storage/audio/episode.mp3
+  --output dist/record/episode.mp3
 ```
 
 Upstream API input:
@@ -317,8 +343,8 @@ Upstream API input:
 cargo run -- record \
   --source upstream \
   --url https://example.com/api/episodes/latest \
-  --output storage/audio/episode.mp3 \
-  --output-json storage/json/episode.json
+  --output dist/record/episode.mp3 \
+  --output-json dist/json/episode.json
 ```
 
 Upstream URL override:
@@ -327,8 +353,8 @@ Upstream URL override:
 cargo run -- record \
   --source upstream \
   --url https://example.com/api/episodes/latest \
-  --output storage/audio/episode.mp3 \
-  --output-json storage/json/episode.json
+  --output dist/record/episode.mp3 \
+  --output-json dist/json/episode.json
 ```
 
 Record options:
@@ -337,9 +363,9 @@ Record options:
 - `--source`: required source selector. Supported values are `json` and `upstream`.
 - `--input`: input Episode JSON file path. Required with `--source json`; invalid with `--source upstream`.
 - `--url`: upstream Episode JSON URL. Valid only with `--source upstream`; overrides `[upstream].episode_url`.
-- `--output`: output MP3 path. Defaults to `storage/audio/{episode_key}.mp3`.
+- `--output`: output MP3 path. Defaults to `dist/record/{episode_key}.mp3`.
 - `--output-json`: optional path to save the Episode JSON used for recording.
-- `--workdir`: working directory for section WAV files and ffmpeg intermediates. Defaults to `./work/<episode_key>`.
+- `--workdir`: working directory for section WAV files and ffmpeg intermediates. Defaults to `work/record/<episode_key>`.
 - `--voicevox-endpoint`: VOICEVOX Engine endpoint. Defaults to `http://127.0.0.1:50021`.
 - `--speaker`: VOICEVOX speaker/style ID. Defaults to `3`.
 - `--speed-scale`: VOICEVOX `speedScale`. Defaults to `1.2`.
@@ -409,9 +435,9 @@ cargo run -- doctor --config ./voicepipe.sample.toml
 ## Makefile Targets
 
 - `make build`: build the Rust binary
-- `make run`: record `samples/episode.json` into `dist/episode.mp3`
+- `make run`: record `samples/episode.json` into `dist/record/episode.mp3`
 - `make onair`: run the upstream-to-downstream orchestration workflow
-- `make preview`: render a short preview with `INPUT`, `OUTPUT`, and `WORKDIR`
+- `make preview`: render a short preview with `INPUT`, `PREVIEW_OUTPUT`, and `PREVIEW_WORKDIR`
 - `make speakers`: list VOICEVOX speakers and styles
 - `make doctor`: validate local prerequisites
 - `make test`: run Rust tests
@@ -419,8 +445,8 @@ cargo run -- doctor --config ./voicepipe.sample.toml
 - `make fmt-check`: check Rust formatting
 - `make clippy`: run clippy for all targets and features with warnings denied
 - `make audit`: run `cargo audit`
+- `make clean`: remove Cargo build artifacts plus generated files under `dist/` and `work/`
 - `make check`: run `fmt-check`, `test`, `clippy`, and `audit`
-- `make clean`: remove Cargo build artifacts
 - `make voicevox-up`: start local VOICEVOX Engine with Docker
 - `make voicevox-down`: stop the local VOICEVOX Engine container
 - `make voicevox-logs`: follow VOICEVOX Engine container logs

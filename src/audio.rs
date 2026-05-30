@@ -80,6 +80,7 @@ pub fn default_workdir(episode_key: &str) -> Result<PathBuf> {
     Ok(env::current_dir()
         .context("現在のディレクトリを取得できません")?
         .join("work")
+        .join("record")
         .join(safe_file_component(episode_key, "episode")))
 }
 

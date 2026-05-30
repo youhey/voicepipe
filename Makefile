@@ -4,8 +4,10 @@ VOICEVOX_PORT ?= 50021
 VOICEVOX_ENDPOINT ?= http://127.0.0.1:$(VOICEVOX_PORT)
 
 INPUT ?= samples/episode.json
-OUTPUT ?= dist/episode.mp3
-WORKDIR ?= work/episode
+OUTPUT ?= dist/record/episode.mp3
+WORKDIR ?= work/record/episode
+PREVIEW_OUTPUT ?= dist/preview/preview.mp3
+PREVIEW_WORKDIR ?= work/preview
 
 .PHONY: build run onair preview speakers doctor test audit fmt fmt-check clippy clean check
 .PHONY: voicevox-up voicevox-down voicevox-logs voicevox-status
@@ -26,8 +28,8 @@ onair:
 preview:
 	cargo run -- preview \
 		--input $(INPUT) \
-		--output $(OUTPUT) \
-		--workdir $(WORKDIR)
+		--output $(PREVIEW_OUTPUT) \
+		--workdir $(PREVIEW_WORKDIR)
 
 speakers:
 	cargo run -- speakers
@@ -54,6 +56,8 @@ check: fmt-check test clippy audit
 
 clean:
 	cargo clean
+	rm -rf dist/*
+	rm -rf work/*
 
 voicevox-up:
 	@if docker ps --filter "name=^/$(VOICEVOX_CONTAINER)$$" --format "{{.Names}}" | grep -qx "$(VOICEVOX_CONTAINER)"; then \

@@ -35,9 +35,13 @@ pub struct ResolvedConfig {
     pub upstream_episode_url: Option<String>,
     pub upstream_access_token: Option<String>,
     pub downstream_upload_url: Option<String>,
-    pub storage_database: PathBuf,
+    pub storage_root_dir: PathBuf,
+    pub onair_database: PathBuf,
+    pub onair_episodes_dir: PathBuf,
+    pub onair_work_dir: PathBuf,
     pub storage_json_dir: PathBuf,
     pub storage_audio_dir: PathBuf,
+    pub storage_preview_dir: PathBuf,
     pub voicevox_endpoint: String,
     pub speaker: u32,
     pub voice: VoiceOptions,
@@ -65,6 +69,7 @@ struct FileConfig {
     preview: Option<FilePathConfig>,
     upstream: Option<FileUpstreamConfig>,
     downstream: Option<FileDownstreamConfig>,
+    onair: Option<FileOnairConfig>,
     storage: Option<FileStorageConfig>,
     voicevox: Option<FileVoicevoxConfig>,
     voice: Option<FileVoiceConfig>,
@@ -84,9 +89,18 @@ struct FileDownstreamConfig {
 
 #[derive(Debug, Deserialize)]
 struct FileStorageConfig {
+    root_dir: Option<PathBuf>,
     database: Option<PathBuf>,
     json_dir: Option<PathBuf>,
     audio_dir: Option<PathBuf>,
+    preview_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileOnairConfig {
+    database: Option<PathBuf>,
+    episodes_dir: Option<PathBuf>,
+    work_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,9 +143,13 @@ impl Default for ResolvedConfig {
             upstream_episode_url: None,
             upstream_access_token: None,
             downstream_upload_url: None,
-            storage_database: PathBuf::from("storage/voicepipe.sqlite"),
-            storage_json_dir: PathBuf::from("storage/json"),
-            storage_audio_dir: PathBuf::from("storage/audio"),
+            storage_root_dir: PathBuf::from("dist"),
+            onair_database: PathBuf::from("dist/onair/onair.sqlite"),
+            onair_episodes_dir: PathBuf::from("dist/onair/episodes"),
+            onair_work_dir: PathBuf::from("work/onair"),
+            storage_json_dir: PathBuf::from("dist/json"),
+            storage_audio_dir: PathBuf::from("dist/record"),
+            storage_preview_dir: PathBuf::from("dist/preview"),
             voicevox_endpoint: DEFAULT_VOICEVOX_ENDPOINT.to_string(),
             speaker: DEFAULT_SPEAKER,
             voice: VoiceOptions::default(),
@@ -142,6 +160,15 @@ impl Default for ResolvedConfig {
 }
 
 impl ResolvedConfig {
+    fn apply_storage_root(&mut self, root_dir: PathBuf) {
+        self.storage_root_dir = root_dir.clone();
+        self.onair_database = root_dir.join("onair").join("onair.sqlite");
+        self.onair_episodes_dir = root_dir.join("onair").join("episodes");
+        self.storage_json_dir = root_dir.join("json");
+        self.storage_audio_dir = root_dir.join("record");
+        self.storage_preview_dir = root_dir.join("preview");
+    }
+
     pub fn apply_overrides(&mut self, overrides: ConfigOverrides) {
         if let Some(value) = overrides.input {
             self.render_input = Some(value.clone());
@@ -265,14 +292,32 @@ impl FileConfig {
         }
 
         if let Some(storage) = self.storage {
+            if let Some(value) = storage.root_dir {
+                resolved.apply_storage_root(value);
+            }
             if let Some(value) = storage.database {
-                resolved.storage_database = value;
+                resolved.onair_database = value;
             }
             if let Some(value) = storage.json_dir {
                 resolved.storage_json_dir = value;
             }
             if let Some(value) = storage.audio_dir {
                 resolved.storage_audio_dir = value;
+            }
+            if let Some(value) = storage.preview_dir {
+                resolved.storage_preview_dir = value;
+            }
+        }
+
+        if let Some(onair) = self.onair {
+            if let Some(value) = onair.database {
+                resolved.onair_database = value;
+            }
+            if let Some(value) = onair.episodes_dir {
+                resolved.onair_episodes_dir = value;
+            }
+            if let Some(value) = onair.work_dir {
+                resolved.onair_work_dir = value;
             }
         }
 
@@ -396,9 +441,15 @@ mod tests {
             upload_url = "https://example.com/api/episodes"
 
             [storage]
-            database = "custom/voicepipe.sqlite"
+            root_dir = "custom/dist"
             json_dir = "custom/json"
             audio_dir = "custom/audio"
+            preview_dir = "custom/preview"
+
+            [onair]
+            database = "custom/onair/onair.sqlite"
+            episodes_dir = "custom/onair/episodes"
+            work_dir = "custom/work/onair"
             "#,
         );
 
@@ -425,12 +476,19 @@ mod tests {
             parsed.downstream_upload_url,
             Some("https://example.com/api/episodes".to_string())
         );
+        assert_eq!(parsed.storage_root_dir, PathBuf::from("custom/dist"));
         assert_eq!(
-            parsed.storage_database,
-            PathBuf::from("custom/voicepipe.sqlite")
+            parsed.onair_database,
+            PathBuf::from("custom/onair/onair.sqlite")
         );
+        assert_eq!(
+            parsed.onair_episodes_dir,
+            PathBuf::from("custom/onair/episodes")
+        );
+        assert_eq!(parsed.onair_work_dir, PathBuf::from("custom/work/onair"));
         assert_eq!(parsed.storage_json_dir, PathBuf::from("custom/json"));
         assert_eq!(parsed.storage_audio_dir, PathBuf::from("custom/audio"));
+        assert_eq!(parsed.storage_preview_dir, PathBuf::from("custom/preview"));
     }
 
     #[test]

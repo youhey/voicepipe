@@ -35,6 +35,7 @@ pub struct ResolvedConfig {
     pub upstream_episode_url: Option<String>,
     pub upstream_access_token: Option<String>,
     pub downstream_upload_url: Option<String>,
+    pub downstream_access_token: Option<String>,
     pub storage_root_dir: PathBuf,
     pub onair_database: PathBuf,
     pub onair_episodes_dir: PathBuf,
@@ -85,6 +86,7 @@ struct FileUpstreamConfig {
 #[derive(Debug, Deserialize)]
 struct FileDownstreamConfig {
     upload_url: Option<String>,
+    access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +145,7 @@ impl Default for ResolvedConfig {
             upstream_episode_url: None,
             upstream_access_token: None,
             downstream_upload_url: None,
+            downstream_access_token: None,
             storage_root_dir: PathBuf::from("dist"),
             onair_database: PathBuf::from("dist/onair/onair.sqlite"),
             onair_episodes_dir: PathBuf::from("dist/onair/episodes"),
@@ -224,6 +227,11 @@ impl ResolvedConfig {
         {
             bail!("downstream.upload_url は空にできません");
         }
+        if let Some(token) = &self.downstream_access_token
+            && token.trim().is_empty()
+        {
+            bail!("downstream.access_token は空にできません");
+        }
         if self.bitrate.trim().is_empty() {
             bail!("audio.bitrate は空にできません");
         }
@@ -285,10 +293,13 @@ impl FileConfig {
             }
         }
 
-        if let Some(downstream) = self.downstream
-            && let Some(value) = downstream.upload_url
-        {
-            resolved.downstream_upload_url = Some(value);
+        if let Some(downstream) = self.downstream {
+            if let Some(value) = downstream.upload_url {
+                resolved.downstream_upload_url = Some(value);
+            }
+            if let Some(value) = downstream.access_token {
+                resolved.downstream_access_token = Some(value);
+            }
         }
 
         if let Some(storage) = self.storage {
@@ -439,6 +450,7 @@ mod tests {
 
             [downstream]
             upload_url = "https://example.com/api/episodes"
+            access_token = "dummy-downstream-token"
 
             [storage]
             root_dir = "custom/dist"
@@ -475,6 +487,10 @@ mod tests {
         assert_eq!(
             parsed.downstream_upload_url,
             Some("https://example.com/api/episodes".to_string())
+        );
+        assert_eq!(
+            parsed.downstream_access_token,
+            Some("dummy-downstream-token".to_string())
         );
         assert_eq!(parsed.storage_root_dir, PathBuf::from("custom/dist"));
         assert_eq!(

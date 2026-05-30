@@ -14,6 +14,7 @@ episode_url = "https://example.com/api/episodes"
 
 [downstream]
 upload_url = "https://example.com/api/episodes"
+# access_token = "replace-with-local-token-or-use-env"
 
 [onair]
 database = "dist/onair/onair.sqlite"

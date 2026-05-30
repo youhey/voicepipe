@@ -6,12 +6,14 @@ use serde_json::json;
 
 pub struct DownstreamClient {
     client: reqwest::Client,
+    access_token: Option<String>,
 }
 
 impl DownstreamClient {
-    pub fn new() -> Self {
+    pub fn new(access_token: Option<String>) -> Self {
         Self {
             client: reqwest::Client::new(),
+            access_token,
         }
     }
 
@@ -70,10 +72,12 @@ impl DownstreamClient {
                     .context("render_metadata multipart part を作成できません")?,
             );
 
-        let response = self
-            .client
-            .post(url)
-            .multipart(form)
+        let mut request = self.client.post(url).multipart(form);
+        if let Some(token) = self.access_token.as_deref() {
+            request = request.bearer_auth(token);
+        }
+
+        let response = request
             .send()
             .await
             .map_err(|error| anyhow!("downstream API に接続できません: {}", error))?;
@@ -146,7 +150,52 @@ mod tests {
                 .expect("response should write");
         });
 
-        DownstreamClient::new()
+        DownstreamClient::new(None)
+            .upload_episode(
+                &format!("http://{address}/api/episodes"),
+                "episode-001",
+                &json_path,
+                &audio_path,
+            )
+            .await
+            .expect("upload should succeed");
+
+        handle.join().expect("server thread should finish");
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn sends_bearer_token_when_configured() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "voicepipe-downstream-token-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let json_path = temp_dir.join("episode.json");
+        let audio_path = temp_dir.join("episode.mp3");
+        fs::write(&json_path, br#"{"episode":{"episode_key":"episode-001"}}"#)
+            .expect("json should be written");
+        fs::write(&audio_path, b"fake mp3").expect("audio should be written");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test server address");
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should arrive");
+            let request = read_http_request(&mut stream);
+
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-token")
+            );
+
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+                .expect("response should write");
+        });
+
+        DownstreamClient::new(Some("test-token".to_string()))
             .upload_episode(
                 &format!("http://{address}/api/episodes"),
                 "episode-001",

@@ -201,6 +201,7 @@ episode_url = "https://example.com/api/episodes"
 
 [downstream]
 upload_url = "https://example.com/api/episodes"
+# access_token = "replace-with-local-token-or-use-env"
 
 [onair]
 database = "dist/onair/onair.sqlite"
@@ -266,6 +267,16 @@ VOICEPIPE_UPSTREAM_ACCESS_TOKEN
 ```
 
 When a token is configured, `record --source upstream` and `onair` send it as an HTTP Bearer token to upstream. The token is not printed in logs.
+
+Downstream upload access tokens are resolved in this order:
+
+```txt
+VOICEPIPE_DOWNSTREAM_ACCESS_TOKEN
+  ↓
+[downstream].access_token
+```
+
+When a downstream token is configured, `onair` sends it as an HTTP Bearer token on the upload `POST [downstream].upload_url` request. The token is not printed in logs.
 
 For `onair`, `[upstream].episode_url` should point to the episode index endpoint, such as `/api/episodes`. For standalone `record --source upstream`, pass `--url` when you want to use a detail or latest endpoint such as `/api/episodes/latest`.
 

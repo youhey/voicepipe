@@ -78,7 +78,7 @@ pub async fn run(args: OnAirArgs) -> Result<()> {
         .to_string();
 
     ffmpeg::ensure_available()?;
-    let downstream = DownstreamClient::new();
+    let downstream = DownstreamClient::new(resolve_downstream_access_token(&loaded_config.values));
 
     for episode in candidates {
         match process_episode(
@@ -164,6 +164,13 @@ fn resolve_upstream_access_token(config: &ResolvedConfig) -> Option<String> {
         .ok()
         .filter(|token| !token.trim().is_empty())
         .or_else(|| config.upstream_access_token.clone())
+}
+
+fn resolve_downstream_access_token(config: &ResolvedConfig) -> Option<String> {
+    std::env::var("VOICEPIPE_DOWNSTREAM_ACCESS_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty())
+        .or_else(|| config.downstream_access_token.clone())
 }
 
 fn episode_detail_url(index_url: &str, episode_key: &str) -> String {

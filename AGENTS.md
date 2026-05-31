@@ -267,6 +267,8 @@ Validation requirements:
 
 Do not make `voicepipe` depend on upstream topic selection, editorial status, screening status, or article metadata unless explicitly requested.
 
+Before uploading Episode JSON downstream, `onair` should replace `episode.scenario_json.sections[].estimated_duration_seconds` with measured durations from the generated section WAV files. The original downloaded Episode JSON artifact should remain unchanged; write a generated upload copy when mutation is needed.
+
 ## radiopipe Web API Contract
 
 When implementing or changing code that consumes the public radiopipe Web API, treat the OpenAPI document in the radiopipe repository as the source of truth:
@@ -313,6 +315,7 @@ For local development, keep Docker operations for VOICEVOX Engine in `Makefile` 
 ## Audio Rendering
 
 Render section audio as separate WAV files first.
+For upload workflows, use those generated section WAV files as the source of truth for per-section duration metadata.
 
 Then use `ffmpeg` to:
 

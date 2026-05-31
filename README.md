@@ -297,10 +297,12 @@ It uses:
 - `dist/onair/episodes/{episode_key}/render_metadata.json` for render metadata
 - `work/onair/{episode_key}/` for intermediate WAV and ffmpeg files
 - `ffprobe` to extract `audio_duration_seconds` from the generated MP3
+- `ffprobe` to measure each generated section WAV and replace `episode.scenario_json.sections[].estimated_duration_seconds` before upload
 - `POST [downstream].upload_url` to upload audio, Episode JSON, render metadata, `recorded_at`, and `audio_duration_seconds`
 - `dist/onair/onair.sqlite` to track processing state
 
 The downstream upload multipart request includes `audio`, `episode_json`, `render_metadata_json`, `recorded_at`, and `audio_duration_seconds`.
+The uploaded `episode_json` is a generated upload copy. The original downloaded `dist/onair/episodes/{episode_key}/episode.json` remains unchanged.
 
 Basic usage:
 
@@ -320,7 +322,9 @@ Discovery only:
 cargo run -- onair --dry-run
 ```
 
-After MP3 generation succeeds, `onair` records `recorded_at` as a UTC RFC3339 timestamp. This is the render completion time, not the upload completion time. `audio_duration_seconds` is the generated MP3 duration rounded to the nearest whole second.
+Before upload, `onair` replaces each `episode.scenario_json.sections[].estimated_duration_seconds` value with the measured duration of that section's generated WAV file, rounded to the nearest whole second. If a section WAV duration cannot be measured, the original upstream value is kept for that section and upload continues.
+
+After MP3 generation succeeds, `onair` records `recorded_at` as a UTC RFC3339 timestamp. This is the render completion time, not the upload completion time. `audio_duration_seconds` is the total generated MP3 duration rounded to the nearest whole second. This is different from per-section `estimated_duration_seconds`.
 
 The SQLite ledger table is `episodes`. It stores `recorded_at`, `audio_duration_seconds`, and `uploaded_at` separately. Uploaded episodes are considered processed and skipped on later runs. Failures are stored with `status = failed` and an `error_message`, and processing continues with the remaining episodes.
 

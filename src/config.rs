@@ -43,11 +43,20 @@ pub struct ResolvedConfig {
     pub storage_json_dir: PathBuf,
     pub storage_audio_dir: PathBuf,
     pub storage_preview_dir: PathBuf,
+    pub keepalive: KeepAliveConfig,
     pub voicevox_endpoint: String,
     pub speaker: u32,
     pub voice: VoiceOptions,
     pub bitrate: String,
     pub format: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct KeepAliveConfig {
+    pub enabled: bool,
+    pub urls: Vec<String>,
+    pub interval: u64,
+    pub timeout: u64,
 }
 
 #[derive(Debug, Default)]
@@ -71,6 +80,7 @@ struct FileConfig {
     upstream: Option<FileUpstreamConfig>,
     downstream: Option<FileDownstreamConfig>,
     onair: Option<FileOnairConfig>,
+    keepalive: Option<FileKeepAliveConfig>,
     storage: Option<FileStorageConfig>,
     voicevox: Option<FileVoicevoxConfig>,
     voice: Option<FileVoiceConfig>,
@@ -103,6 +113,14 @@ struct FileOnairConfig {
     database: Option<PathBuf>,
     episodes_dir: Option<PathBuf>,
     work_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileKeepAliveConfig {
+    enabled: Option<bool>,
+    urls: Option<Vec<String>>,
+    interval: Option<u64>,
+    timeout: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,11 +171,23 @@ impl Default for ResolvedConfig {
             storage_json_dir: PathBuf::from("dist/json"),
             storage_audio_dir: PathBuf::from("dist/record"),
             storage_preview_dir: PathBuf::from("dist/preview"),
+            keepalive: KeepAliveConfig::default(),
             voicevox_endpoint: DEFAULT_VOICEVOX_ENDPOINT.to_string(),
             speaker: DEFAULT_SPEAKER,
             voice: VoiceOptions::default(),
             bitrate: DEFAULT_OUTPUT_BITRATE.to_string(),
             format: DEFAULT_AUDIO_FORMAT.to_string(),
+        }
+    }
+}
+
+impl Default for KeepAliveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            urls: Vec::new(),
+            interval: 300,
+            timeout: 10,
         }
     }
 }
@@ -237,6 +267,15 @@ impl ResolvedConfig {
         }
         if self.format != DEFAULT_AUDIO_FORMAT {
             bail!("audio.format は mp3 のみ対応しています: {}", self.format);
+        }
+        if self.keepalive.interval == 0 {
+            bail!("keepalive.interval は 1 以上を指定してください");
+        }
+        if self.keepalive.timeout == 0 {
+            bail!("keepalive.timeout は 1 以上を指定してください");
+        }
+        if self.keepalive.urls.iter().any(|url| url.trim().is_empty()) {
+            bail!("keepalive.urls に空の URL は指定できません");
         }
 
         validate_scale("voice.speed_scale", self.voice.speed_scale)?;
@@ -329,6 +368,21 @@ impl FileConfig {
             }
             if let Some(value) = onair.work_dir {
                 resolved.onair_work_dir = value;
+            }
+        }
+
+        if let Some(keepalive) = self.keepalive {
+            if let Some(value) = keepalive.enabled {
+                resolved.keepalive.enabled = value;
+            }
+            if let Some(value) = keepalive.urls {
+                resolved.keepalive.urls = value;
+            }
+            if let Some(value) = keepalive.interval {
+                resolved.keepalive.interval = value;
+            }
+            if let Some(value) = keepalive.timeout {
+                resolved.keepalive.timeout = value;
             }
         }
 
@@ -462,6 +516,12 @@ mod tests {
             database = "custom/onair/onair.sqlite"
             episodes_dir = "custom/onair/episodes"
             work_dir = "custom/work/onair"
+
+            [keepalive]
+            enabled = true
+            urls = ["https://example.com/health"]
+            interval = 60
+            timeout = 5
             "#,
         );
 
@@ -505,6 +565,13 @@ mod tests {
         assert_eq!(parsed.storage_json_dir, PathBuf::from("custom/json"));
         assert_eq!(parsed.storage_audio_dir, PathBuf::from("custom/audio"));
         assert_eq!(parsed.storage_preview_dir, PathBuf::from("custom/preview"));
+        assert!(parsed.keepalive.enabled);
+        assert_eq!(
+            parsed.keepalive.urls,
+            vec!["https://example.com/health".to_string()]
+        );
+        assert_eq!(parsed.keepalive.interval, 60);
+        assert_eq!(parsed.keepalive.timeout, 5);
     }
 
     #[test]

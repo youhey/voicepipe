@@ -216,6 +216,12 @@ database = "dist/onair/onair.sqlite"
 episodes_dir = "dist/onair/episodes"
 work_dir = "work/onair"
 
+[keepalive]
+enabled = false
+urls = []
+interval = 300
+timeout = 10
+
 [storage]
 root_dir = "dist"
 json_dir = "dist/json"
@@ -369,6 +375,16 @@ The default interval is `300` seconds. `--once` runs one cycle and exits. `--lim
 Before entering the loop, `daemon` validates VOICEVOX reachability, ffmpeg and ffprobe availability, upstream reachability, SQLite writability, and `dist` / `work` writability. A failed episode is recorded by the onair workflow and does not stop the cycle. If one cycle fails, the daemon logs the error and continues with the next interval.
 
 Ctrl+C requests a graceful shutdown. The daemon finishes the current operation, stops before the next cycle, and exits cleanly.
+
+When `[keepalive].enabled = true` and `[keepalive].urls` is not empty, `daemon` also starts an independent keepalive loop. It sends HTTP `GET` requests to each configured URL every `[keepalive].interval` seconds with `[keepalive].timeout` seconds per request. Keepalive failures are logged as warnings and do not fail the daemon or the onair cycle.
+
+```toml
+[keepalive]
+enabled = true
+urls = ["https://example.com/health"]
+interval = 300
+timeout = 10
+```
 
 ## Record
 

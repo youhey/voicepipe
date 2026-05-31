@@ -21,6 +21,12 @@ database = "dist/onair/onair.sqlite"
 episodes_dir = "dist/onair/episodes"
 work_dir = "work/onair"
 
+[keepalive]
+enabled = false
+urls = []
+interval = 300
+timeout = 10
+
 [storage]
 root_dir = "dist"
 json_dir = "dist/json"

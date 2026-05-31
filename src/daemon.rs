@@ -14,7 +14,7 @@ use tokio::{sync::Notify, time::sleep};
 use crate::{
     audio,
     cli::DaemonArgs,
-    config::{self, ResolvedConfig},
+    config::{self, KeepAliveConfig, ResolvedConfig},
     ffmpeg, onair,
     upstream::UpstreamClient,
     voicevox::VoicevoxClient,
@@ -30,8 +30,11 @@ pub async fn run(args: DaemonArgs) -> Result<()> {
     println!("voicepipe daemon started");
     println!("interval={}", args.interval);
 
+    let config = config::load(args.config.as_deref())?.values;
     let shutdown = Shutdown::new();
     shutdown.listen();
+    let keepalive_handle = start_keepalive(config.keepalive.clone(), shutdown.clone())?;
+
     loop {
         println!("running onair cycle...");
         if let Err(error) = onair::run_onair_once(args.to_onair_args()).await {
@@ -52,8 +55,66 @@ pub async fn run(args: DaemonArgs) -> Result<()> {
     }
 
     println!("voicepipe daemon stopped");
+    if let Some(handle) = keepalive_handle {
+        handle.abort();
+    }
 
     Ok(())
+}
+
+fn start_keepalive(
+    config: KeepAliveConfig,
+    shutdown: Shutdown,
+) -> Result<Option<tokio::task::JoinHandle<()>>> {
+    if !config.enabled || config.urls.is_empty() {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(config.timeout))
+        .build()
+        .context("keepalive HTTP client を作成できません")?;
+
+    println!("keepalive started");
+    println!("keepalive_interval={}", config.interval);
+
+    Ok(Some(tokio::spawn(async move {
+        loop {
+            run_keepalive_once(&client, &config.urls).await;
+
+            tokio::select! {
+                () = sleep(Duration::from_secs(config.interval)) => {}
+                () = shutdown.notified() => {
+                    break;
+                }
+            }
+
+            if shutdown.is_requested() {
+                break;
+            }
+        }
+
+        println!("keepalive stopped");
+    })))
+}
+
+async fn run_keepalive_once(client: &reqwest::Client, urls: &[String]) {
+    for url in urls {
+        match client.get(url).send().await {
+            Ok(response) if response.status().is_success() => {
+                println!("keepalive ok: {url}");
+            }
+            Ok(response) => {
+                println!(
+                    "warning: keepalive failed: {url}: HTTP {}",
+                    response.status()
+                );
+            }
+            Err(error) => {
+                println!("warning: keepalive failed: {url}: {error}");
+            }
+        }
+    }
 }
 
 async fn validate_environment(args: &DaemonArgs) -> Result<()> {

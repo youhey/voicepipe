@@ -40,6 +40,13 @@ pub async fn run(args: DoctorArgs) -> Result<()> {
             failures.push("ffmpeg");
         }
     }
+    match ffmpeg::ensure_probe_available() {
+        Ok(()) => println!("ok: ffprobe available"),
+        Err(error) => {
+            println!("error: ffprobe unavailable: {error:#}");
+            failures.push("ffprobe");
+        }
+    }
 
     if let Some(loaded) = loaded_config {
         let client = VoicevoxClient::new(

@@ -71,13 +71,49 @@ impl Ledger {
         )
     }
 
-    pub fn mark_recorded(&self, episode_key: &str, audio_path: &Path) -> Result<()> {
-        self.update_status(
-            episode_key,
-            "recorded",
-            Some(("audio_path", audio_path.to_path_buf())),
-            "recorded_at",
-        )
+    pub fn mark_recorded(
+        &self,
+        episode_key: &str,
+        audio_path: &Path,
+        recorded_at: &str,
+        audio_duration_seconds: u64,
+    ) -> Result<()> {
+        let existing = self
+            .connection
+            .query_row(
+                "SELECT episode_key FROM episodes WHERE episode_key = ?1",
+                params![episode_key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("ledger episode 存在確認に失敗しました")?;
+
+        if existing.is_none() {
+            self.upsert_pending(episode_key)?;
+        }
+
+        self.connection
+            .execute(
+                r#"
+                UPDATE episodes
+                SET status = 'recorded',
+                    audio_path = ?2,
+                    recorded_at = ?3,
+                    audio_duration_seconds = ?4,
+                    error_message = NULL,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                WHERE episode_key = ?1
+                "#,
+                params![
+                    episode_key,
+                    audio_path.display().to_string(),
+                    recorded_at,
+                    audio_duration_seconds
+                ],
+            )
+            .with_context(|| format!("ledger recorded 更新に失敗しました: {episode_key}"))?;
+
+        Ok(())
     }
 
     pub fn mark_uploaded(&self, episode_key: &str) -> Result<()> {
@@ -127,6 +163,7 @@ impl Ledger {
                     audio_path TEXT,
                     upstream_fetched_at TEXT,
                     recorded_at TEXT,
+                    audio_duration_seconds INTEGER,
                     uploaded_at TEXT,
                     error_message TEXT,
                     created_at TEXT NOT NULL,
@@ -136,7 +173,35 @@ impl Ledger {
                 CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
                 "#,
             )
-            .context("ledger schema migration に失敗しました")
+            .context("ledger schema migration に失敗しました")?;
+        self.ensure_column("audio_duration_seconds", "INTEGER")?;
+
+        Ok(())
+    }
+
+    fn ensure_column(&self, name: &str, definition: &str) -> Result<()> {
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(episodes)")
+            .context("ledger schema 確認を準備できません")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .context("ledger schema を確認できません")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("ledger schema の列を読み込めません")?;
+
+        if columns.iter().any(|column| column == name) {
+            return Ok(());
+        }
+
+        self.connection
+            .execute(
+                &format!("ALTER TABLE episodes ADD COLUMN {name} {definition}"),
+                [],
+            )
+            .with_context(|| format!("ledger schema に {name} を追加できません"))?;
+
+        Ok(())
     }
 
     fn update_status(
@@ -180,17 +245,6 @@ impl Ledger {
                 WHERE episode_key = ?1
                 "#
             }
-            (Some("audio_path"), "recorded_at") => {
-                r#"
-                UPDATE episodes
-                SET status = ?2,
-                    audio_path = ?3,
-                    recorded_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-                    error_message = NULL,
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                WHERE episode_key = ?1
-                "#
-            }
             _ => unreachable!("unsupported ledger status update"),
         };
 
@@ -225,7 +279,12 @@ mod tests {
             .mark_fetched("episode-001", Path::new("dist/json/episode-001.json"))
             .expect("fetched should update");
         ledger
-            .mark_recorded("episode-001", Path::new("dist/record/episode-001.mp3"))
+            .mark_recorded(
+                "episode-001",
+                Path::new("dist/record/episode-001.mp3"),
+                "2026-05-31T04:12:30Z",
+                842,
+            )
             .expect("recorded should update");
         ledger
             .mark_uploaded("episode-001")
@@ -237,6 +296,44 @@ mod tests {
                 .expect("uploaded keys should load"),
             vec!["episode-001".to_string()]
         );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn stores_recording_metadata_separately_from_upload_time() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "voicepipe-ledger-recording-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let db_path = temp_dir.join("voicepipe.sqlite");
+        let ledger = Ledger::open(&db_path).expect("ledger should open");
+
+        ledger
+            .mark_recorded(
+                "episode-001",
+                Path::new("dist/record/episode-001.mp3"),
+                "2026-05-31T04:12:30Z",
+                842,
+            )
+            .expect("recorded should update");
+        ledger
+            .mark_uploaded("episode-001")
+            .expect("uploaded should update");
+
+        let (recorded_at, duration, uploaded_at): (String, u64, String) = ledger
+            .connection
+            .query_row(
+                "SELECT recorded_at, audio_duration_seconds, uploaded_at FROM episodes WHERE episode_key = ?1",
+                params!["episode-001"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("recording metadata should load");
+
+        assert_eq!(recorded_at, "2026-05-31T04:12:30Z");
+        assert_eq!(duration, 842);
+        assert!(!uploaded_at.is_empty());
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

@@ -60,7 +60,7 @@ Phase 3 adds `voicepipe preview` for faster voice tuning. Preview renders only a
 - Rust toolchain
 - Docker
 - VOICEVOX Engine running locally or via Docker
-- ffmpeg available from `PATH`
+- ffmpeg and ffprobe available from `PATH`
 
 Default VOICEVOX endpoint is `http://127.0.0.1:50021`.
 
@@ -285,7 +285,7 @@ For `onair`, `[upstream].episode_url` should point to the episode index endpoint
 `onair` orchestrates the full local processing workflow:
 
 ```txt
-upstream -> Episode JSON -> record MP3 -> downstream upload -> SQLite ledger
+upstream -> Episode JSON -> record MP3 -> ffprobe duration -> downstream upload -> SQLite ledger
 ```
 
 It uses:
@@ -296,8 +296,11 @@ It uses:
 - `dist/onair/episodes/{episode_key}/audio.mp3` for recorded audio
 - `dist/onair/episodes/{episode_key}/render_metadata.json` for render metadata
 - `work/onair/{episode_key}/` for intermediate WAV and ffmpeg files
-- `POST [downstream].upload_url` to upload audio, Episode JSON, and render metadata
+- `ffprobe` to extract `audio_duration_seconds` from the generated MP3
+- `POST [downstream].upload_url` to upload audio, Episode JSON, render metadata, `recorded_at`, and `audio_duration_seconds`
 - `dist/onair/onair.sqlite` to track processing state
+
+The downstream upload multipart request includes `audio`, `episode_json`, `render_metadata_json`, `recorded_at`, and `audio_duration_seconds`.
 
 Basic usage:
 
@@ -317,7 +320,9 @@ Discovery only:
 cargo run -- onair --dry-run
 ```
 
-The SQLite ledger table is `episodes`. Uploaded episodes are considered processed and skipped on later runs. Failures are stored with `status = failed` and an `error_message`, and processing continues with the remaining episodes.
+After MP3 generation succeeds, `onair` records `recorded_at` as a UTC RFC3339 timestamp. This is the render completion time, not the upload completion time. `audio_duration_seconds` is the generated MP3 duration rounded to the nearest whole second.
+
+The SQLite ledger table is `episodes`. It stores `recorded_at`, `audio_duration_seconds`, and `uploaded_at` separately. Uploaded episodes are considered processed and skipped on later runs. Failures are stored with `status = failed` and an `error_message`, and processing continues with the remaining episodes.
 
 Default `onair` output layout:
 

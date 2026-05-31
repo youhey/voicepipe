@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde_json::json;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     audio,
@@ -78,6 +79,7 @@ pub async fn run(args: OnAirArgs) -> Result<()> {
         .to_string();
 
     ffmpeg::ensure_available()?;
+    ffmpeg::ensure_probe_available()?;
     let downstream = DownstreamClient::new(resolve_downstream_access_token(&loaded_config.values));
 
     for episode in candidates {
@@ -139,7 +141,17 @@ async fn process_episode(
     let workdir = onair_work_dir(config, &episode.episode_key)?;
     println!("Recording MP3: {}", audio_path.display());
     renderer::render_scenario_to_mp3(config, &scenario, audio_path.clone(), workdir).await?;
-    ledger.mark_recorded(&episode.episode_key, &audio_path)?;
+    let audio_duration_seconds = ffmpeg::probe_duration_seconds(&audio_path)?;
+    let recorded_at = current_utc_rfc3339()?;
+    println!("Recording completed:");
+    println!("recorded_at={recorded_at}");
+    println!("audio_duration_seconds={audio_duration_seconds}");
+    ledger.mark_recorded(
+        &episode.episode_key,
+        &audio_path,
+        &recorded_at,
+        audio_duration_seconds,
+    )?;
 
     let render_metadata_path = episode_dir.join("render_metadata.json");
     write_render_metadata(
@@ -147,14 +159,24 @@ async fn process_episode(
         &episode.episode_key,
         &json_path,
         &audio_path,
+        &recorded_at,
+        audio_duration_seconds,
         &render_metadata_path,
     )?;
 
-    println!("Uploading downstream: {upload_url}");
+    println!("Uploading episode...");
     downstream
-        .upload_episode(upload_url, &episode.episode_key, &json_path, &audio_path)
+        .upload_episode(
+            upload_url,
+            &json_path,
+            &audio_path,
+            &render_metadata_path,
+            &recorded_at,
+            audio_duration_seconds,
+        )
         .await?;
     ledger.mark_uploaded(&episode.episode_key)?;
+    println!("Upload completed.");
 
     Ok(())
 }
@@ -175,6 +197,14 @@ fn resolve_downstream_access_token(config: &ResolvedConfig) -> Option<String> {
 
 fn episode_detail_url(index_url: &str, episode_key: &str) -> String {
     format!("{}/{}", index_url.trim_end_matches('/'), episode_key)
+}
+
+fn current_utc_rfc3339() -> Result<String> {
+    let now = OffsetDateTime::now_utc()
+        .replace_nanosecond(0)
+        .context("recorded_at の秒精度変換に失敗しました")?;
+    now.format(&Rfc3339)
+        .context("recorded_at を RFC3339 形式に変換できません")
 }
 
 fn onair_episode_dir(config: &ResolvedConfig, episode_key: &str) -> Result<PathBuf> {
@@ -204,6 +234,8 @@ fn write_render_metadata(
     episode_key: &str,
     json_path: &Path,
     audio_path: &Path,
+    recorded_at: &str,
+    audio_duration_seconds: u64,
     metadata_path: &Path,
 ) -> Result<()> {
     let generated_at_unix_seconds = SystemTime::now()
@@ -214,6 +246,8 @@ fn write_render_metadata(
         "episode_key": episode_key,
         "generated_at_unix_seconds": generated_at_unix_seconds,
         "voicepipe_version": env!("CARGO_PKG_VERSION"),
+        "recorded_at": recorded_at,
+        "audio_duration_seconds": audio_duration_seconds,
         "json_path": json_path.display().to_string(),
         "audio_path": audio_path.display().to_string(),
         "voicevox_endpoint": config.voicevox_endpoint,

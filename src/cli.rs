@@ -16,6 +16,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Periodically run the onair workflow.
+    Daemon(DaemonArgs),
+
     /// Discover upstream episodes, record audio, upload downstream, and track state.
     Onair(OnAirArgs),
 
@@ -82,6 +85,29 @@ pub struct OnAirArgs {
     /// VOICEVOX volumeScale.
     #[arg(long)]
     pub volume_scale: Option<f64>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct DaemonArgs {
+    /// Configuration file path. When omitted, the default config stack is used.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+
+    /// Seconds to wait between onair cycles.
+    #[arg(long, default_value_t = 300)]
+    pub interval: u64,
+
+    /// Run one onair cycle and exit.
+    #[arg(long)]
+    pub once: bool,
+
+    /// Maximum number of discovered episodes to process per cycle.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    /// Discover episodes without download, recording, upload, or ledger writes.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -294,6 +320,23 @@ impl OnAirArgs {
             pause_length_scale: self.pause_length_scale,
             volume_scale: self.volume_scale,
             ..ConfigOverrides::default()
+        }
+    }
+}
+
+impl DaemonArgs {
+    pub fn to_onair_args(&self) -> OnAirArgs {
+        OnAirArgs {
+            config: self.config.clone(),
+            limit: self.limit,
+            dry_run: self.dry_run,
+            voicevox_endpoint: None,
+            speaker: None,
+            speed_scale: None,
+            pitch_scale: None,
+            intonation_scale: None,
+            pause_length_scale: None,
+            volume_scale: None,
         }
     }
 }

@@ -21,6 +21,10 @@ use crate::{
 };
 
 pub async fn run(args: OnAirArgs) -> Result<()> {
+    run_onair_once(args).await
+}
+
+pub async fn run_onair_once(args: OnAirArgs) -> Result<()> {
     let mut loaded_config = config::load(args.config.as_deref())?;
     loaded_config
         .values

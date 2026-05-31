@@ -1,6 +1,7 @@
 mod audio;
 mod cli;
 mod config;
+mod daemon;
 mod doctor;
 mod downstream;
 mod ffmpeg;
@@ -22,6 +23,7 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
+        Commands::Daemon(args) => daemon::run(args).await,
         Commands::Onair(args) => onair::run(args).await,
         Commands::Record(args) => renderer::record(args).await,
         Commands::Render(args) => renderer::render(args).await,

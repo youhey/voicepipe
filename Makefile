@@ -9,7 +9,7 @@ WORKDIR ?= work/record/episode
 PREVIEW_OUTPUT ?= dist/preview/preview.mp3
 PREVIEW_WORKDIR ?= work/preview
 
-.PHONY: build run onair preview speakers doctor test audit fmt fmt-check clippy clean check
+.PHONY: build run onair daemon daemon-once preview speakers doctor test audit fmt fmt-check clippy clean check
 .PHONY: voicevox-up voicevox-down voicevox-logs voicevox-status
 
 build:
@@ -24,6 +24,12 @@ run:
 
 onair:
 	cargo run -- onair
+
+daemon:
+	cargo run -- daemon
+
+daemon-once:
+	cargo run -- daemon --once
 
 preview:
 	cargo run -- preview \

@@ -496,6 +496,8 @@ Before making broad architectural changes, check whether they fit the current na
 
 Prefer small, reviewable changes.
 
+The daemon must remain a thin orchestration layer. Business logic belongs to `record` and `onair`; daemon code must reuse the existing onair workflow, especially `run_onair_once`, and must not duplicate discovery, recording, upload, section duration, or SQLite ledger logic.
+
 Do not rewrite existing README/project wording casually. Preserve the chosen naming:
 
 ```txt

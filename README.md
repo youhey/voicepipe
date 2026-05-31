@@ -160,6 +160,14 @@ Preview discovery without download, recording, upload, or ledger writes:
 cargo run -- onair --dry-run
 ```
 
+Run `onair` periodically with the daemon:
+
+```bash
+cargo run -- daemon
+cargo run -- daemon --once
+cargo run -- daemon --interval 300
+```
+
 Generate a short preview for tuning:
 
 ```bash
@@ -344,6 +352,24 @@ dist/
 Intermediate files for `onair` are written under `work/onair/{episode_key}/`.
 Older local generated files under `storage/` are not migrated automatically and can be removed manually if they are no longer needed.
 
+## Daemon
+
+`daemon` periodically runs the same `run_onair_once` workflow used by `onair`. It does not duplicate discovery, recording, upload, or SQLite logic.
+
+```bash
+cargo run -- daemon
+cargo run -- daemon --once
+cargo run -- daemon --interval 300
+cargo run -- daemon --limit 1
+cargo run -- daemon --dry-run
+```
+
+The default interval is `300` seconds. `--once` runs one cycle and exits. `--limit` and `--dry-run` are passed through to the onair cycle.
+
+Before entering the loop, `daemon` validates VOICEVOX reachability, ffmpeg and ffprobe availability, upstream reachability, SQLite writability, and `dist` / `work` writability. A failed episode is recorded by the onair workflow and does not stop the cycle. If one cycle fails, the daemon logs the error and continues with the next interval.
+
+Ctrl+C requests a graceful shutdown. The daemon finishes the current operation, stops before the next cycle, and exits cleanly.
+
 ## Record
 
 `record` is the main command for generating a full MP3 audio program.
@@ -457,6 +483,8 @@ cargo run -- doctor --config ./voicepipe.sample.toml
 - `make build`: build the Rust binary
 - `make run`: record `samples/episode.json` into `dist/record/episode.mp3`
 - `make onair`: run the upstream-to-downstream orchestration workflow
+- `make daemon`: run `voicepipe daemon`
+- `make daemon-once`: run `voicepipe daemon --once`
 - `make preview`: render a short preview with `INPUT`, `PREVIEW_OUTPUT`, and `PREVIEW_WORKDIR`
 - `make speakers`: list VOICEVOX speakers and styles
 - `make doctor`: validate local prerequisites

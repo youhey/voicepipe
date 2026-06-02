@@ -40,7 +40,7 @@ upstream API or local Episode JSON -> VOICEVOX section WAVs -> ffmpeg concat -> 
 
 VOICEVOX Engine is treated as an external TTS backend. voicepipe does not bundle VOICEVOX Engine, voice libraries, models, or Docker images.
 
-voicepipe still does not implement upload APIs, S3 storage, result JSON submission, multiple TTS providers, BGM/SE mixing, volume normalization, cache-based regeneration skipping, or GUI features.
+voicepipe still does not implement S3 storage, result JSON submission, multiple TTS providers, BGM/SE mixing, volume normalization, cache-based regeneration skipping, or GUI features.
 
 ## Phase 2 Goal
 
@@ -290,7 +290,7 @@ VOICEPIPE_DOWNSTREAM_ACCESS_TOKEN
 [downstream].access_token
 ```
 
-When a downstream token is configured, `onair` sends it as an HTTP Bearer token on the upload `POST [downstream].upload_url` request. The token is not printed in logs.
+When a downstream token is configured, `onair` sends it as an HTTP Bearer token on downstream manifest and upload requests. The token is not printed in logs.
 
 For `onair`, `[upstream].episode_url` should point to the episode index endpoint, such as `/api/episodes`. For standalone `record --source upstream`, pass `--url` when you want to use a detail or latest endpoint such as `/api/episodes/latest`.
 
@@ -299,24 +299,29 @@ For `onair`, `[upstream].episode_url` should point to the episode index endpoint
 `onair` orchestrates the full local processing workflow:
 
 ```txt
-upstream -> Episode JSON -> record MP3 -> ffprobe duration -> downstream upload -> SQLite ledger
+upstream -> Episode JSON -> record MP3 -> ffprobe duration -> downstream manifest comparison -> POST/PUT/SKIP -> SQLite ledger
 ```
 
 It uses:
 
 - `GET [upstream].episode_url` to discover completed episodes
 - `GET [upstream].episode_url/{episode_key}` to download each Episode JSON
+- `GET [downstream].upload_url/manifest` to load the downstream synchronization manifest
 - `dist/onair/episodes/{episode_key}/episode.json` for local JSON persistence
 - `dist/onair/episodes/{episode_key}/audio.mp3` for recorded audio
 - `dist/onair/episodes/{episode_key}/render_metadata.json` for render metadata
 - `work/onair/{episode_key}/` for intermediate WAV and ffmpeg files
 - `ffprobe` to extract `audio_duration_seconds` from the generated MP3
 - `ffprobe` to measure each generated section WAV and replace `episode.scenario_json.sections[].estimated_duration_seconds` before upload
-- `POST [downstream].upload_url` to upload audio, Episode JSON, render metadata, `recorded_at`, and `audio_duration_seconds`
+- SHA256 and byte size calculation for the generated MP3 and the exact upload Episode JSON bytes
+- `POST [downstream].upload_url` when the episode is missing downstream
+- `PUT [downstream].upload_url/{episode_key}` when downstream hashes are missing or differ
+- upload skip when downstream `audio_sha256` and `episode_json_sha256` already match local artifacts
 - `dist/onair/onair.sqlite` to track processing state
 
 The downstream upload multipart request includes `audio`, `episode_json`, `render_metadata_json`, `recorded_at`, and `audio_duration_seconds`.
 The uploaded `episode_json` is a generated upload copy. The original downloaded `dist/onair/episodes/{episode_key}/episode.json` remains unchanged.
+The JSON hash is calculated from the exact generated upload copy that is sent to downstream.
 
 Basic usage:
 
@@ -340,7 +345,15 @@ Before upload, `onair` replaces each `episode.scenario_json.sections[].estimated
 
 After MP3 generation succeeds, `onair` records `recorded_at` as a UTC RFC3339 timestamp. This is the render completion time, not the upload completion time. `audio_duration_seconds` is the total generated MP3 duration rounded to the nearest whole second. This is different from per-section `estimated_duration_seconds`.
 
-The SQLite ledger table is `episodes`. It stores `recorded_at`, `audio_duration_seconds`, and `uploaded_at` separately. Uploaded episodes are considered processed and skipped on later runs. Failures are stored with `status = failed` and an `error_message`, and processing continues with the remaining episodes.
+The SQLite ledger table is `episodes`. It stores `recorded_at`, `audio_duration_seconds`, and `uploaded_at` separately. It also stores `audio_sha256`, `episode_json_sha256`, `audio_size_bytes`, `episode_json_size_bytes`, `downstream_synced_at`, `downstream_status`, and `last_upload_method`.
+
+Downstream synchronization uses the manifest as the source of truth:
+
+- missing episode: upload with `POST`
+- matching `audio_sha256` and `episode_json_sha256`: skip upload
+- missing or mismatched hash: repair with `PUT`
+
+`onair` does not automatically delete downstream episodes. Missing from upstream is not treated as a deletion signal. Failures are stored with `status = failed` and an `error_message`, and processing continues with the remaining episodes. If the downstream manifest cannot be retrieved, the current onair cycle aborts before recording or upload because the synchronization state is uncertain.
 
 Default `onair` output layout:
 

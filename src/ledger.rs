@@ -10,6 +10,15 @@ pub struct Ledger {
     connection: Connection,
 }
 
+pub struct DownstreamSyncMetadata {
+    pub audio_sha256: String,
+    pub episode_json_sha256: String,
+    pub audio_size_bytes: u64,
+    pub episode_json_size_bytes: u64,
+    pub downstream_status: String,
+    pub last_upload_method: String,
+}
+
 impl Ledger {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent()
@@ -29,19 +38,6 @@ impl Ledger {
         ledger.migrate()?;
 
         Ok(ledger)
-    }
-
-    pub fn uploaded_episode_keys(&self) -> Result<Vec<String>> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT episode_key FROM episodes WHERE status = 'uploaded'")
-            .context("uploaded episode の照会を準備できません")?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .context("uploaded episode を照会できません")?;
-
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .context("uploaded episode を読み込めません")
     }
 
     pub fn upsert_pending(&self, episode_key: &str) -> Result<()> {
@@ -116,20 +112,58 @@ impl Ledger {
         Ok(())
     }
 
-    pub fn mark_uploaded(&self, episode_key: &str) -> Result<()> {
+    pub fn mark_downstream_synced(
+        &self,
+        episode_key: &str,
+        metadata: &DownstreamSyncMetadata,
+        upload_performed: bool,
+    ) -> Result<()> {
+        let existing = self
+            .connection
+            .query_row(
+                "SELECT episode_key FROM episodes WHERE episode_key = ?1",
+                params![episode_key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("ledger episode 存在確認に失敗しました")?;
+
+        if existing.is_none() {
+            self.upsert_pending(episode_key)?;
+        }
+
         self.connection
             .execute(
                 r#"
                 UPDATE episodes
                 SET status = 'uploaded',
-                    uploaded_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                    audio_sha256 = ?2,
+                    episode_json_sha256 = ?3,
+                    audio_size_bytes = ?4,
+                    episode_json_size_bytes = ?5,
+                    downstream_synced_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                    downstream_status = ?6,
+                    last_upload_method = ?7,
+                    uploaded_at = CASE
+                        WHEN ?8 THEN strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                        ELSE uploaded_at
+                    END,
                     error_message = NULL,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                 WHERE episode_key = ?1
                 "#,
-                params![episode_key],
+                params![
+                    episode_key,
+                    metadata.audio_sha256,
+                    metadata.episode_json_sha256,
+                    metadata.audio_size_bytes,
+                    metadata.episode_json_size_bytes,
+                    metadata.downstream_status,
+                    metadata.last_upload_method,
+                    upload_performed,
+                ],
             )
-            .with_context(|| format!("ledger uploaded 更新に失敗しました: {episode_key}"))?;
+            .with_context(|| format!("ledger downstream 同期更新に失敗しました: {episode_key}"))?;
 
         Ok(())
     }
@@ -164,6 +198,13 @@ impl Ledger {
                     upstream_fetched_at TEXT,
                     recorded_at TEXT,
                     audio_duration_seconds INTEGER,
+                    audio_sha256 TEXT,
+                    episode_json_sha256 TEXT,
+                    audio_size_bytes INTEGER,
+                    episode_json_size_bytes INTEGER,
+                    downstream_synced_at TEXT,
+                    downstream_status TEXT,
+                    last_upload_method TEXT,
                     uploaded_at TEXT,
                     error_message TEXT,
                     created_at TEXT NOT NULL,
@@ -175,6 +216,13 @@ impl Ledger {
             )
             .context("ledger schema migration に失敗しました")?;
         self.ensure_column("audio_duration_seconds", "INTEGER")?;
+        self.ensure_column("audio_sha256", "TEXT")?;
+        self.ensure_column("episode_json_sha256", "TEXT")?;
+        self.ensure_column("audio_size_bytes", "INTEGER")?;
+        self.ensure_column("episode_json_size_bytes", "INTEGER")?;
+        self.ensure_column("downstream_synced_at", "TEXT")?;
+        self.ensure_column("downstream_status", "TEXT")?;
+        self.ensure_column("last_upload_method", "TEXT")?;
 
         Ok(())
     }
@@ -265,42 +313,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tracks_uploaded_episode_keys() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("voicepipe-ledger-test-{}", std::process::id()));
-        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
-        let db_path = temp_dir.join("voicepipe.sqlite");
-        let ledger = Ledger::open(&db_path).expect("ledger should open");
-
-        ledger
-            .upsert_pending("episode-001")
-            .expect("pending should update");
-        ledger
-            .mark_fetched("episode-001", Path::new("dist/json/episode-001.json"))
-            .expect("fetched should update");
-        ledger
-            .mark_recorded(
-                "episode-001",
-                Path::new("dist/record/episode-001.mp3"),
-                "2026-05-31T04:12:30Z",
-                842,
-            )
-            .expect("recorded should update");
-        ledger
-            .mark_uploaded("episode-001")
-            .expect("uploaded should update");
-
-        assert_eq!(
-            ledger
-                .uploaded_episode_keys()
-                .expect("uploaded keys should load"),
-            vec!["episode-001".to_string()]
-        );
-
-        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-    }
-
-    #[test]
     fn stores_recording_metadata_separately_from_upload_time() {
         let temp_dir = std::env::temp_dir().join(format!(
             "voicepipe-ledger-recording-test-{}",
@@ -319,8 +331,19 @@ mod tests {
             )
             .expect("recorded should update");
         ledger
-            .mark_uploaded("episode-001")
-            .expect("uploaded should update");
+            .mark_downstream_synced(
+                "episode-001",
+                &DownstreamSyncMetadata {
+                    audio_sha256: "audio-hash".to_string(),
+                    episode_json_sha256: "json-hash".to_string(),
+                    audio_size_bytes: 10,
+                    episode_json_size_bytes: 20,
+                    downstream_status: "created".to_string(),
+                    last_upload_method: "post".to_string(),
+                },
+                true,
+            )
+            .expect("sync metadata should update");
 
         let (recorded_at, duration, uploaded_at): (String, u64, String) = ledger
             .connection
@@ -343,5 +366,85 @@ mod tests {
         let message = "a".repeat(2100);
 
         assert_eq!(summarize_error(&message).chars().count(), 2000);
+    }
+
+    #[test]
+    fn stores_downstream_sync_metadata() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("voicepipe-ledger-sync-test-{}", std::process::id()));
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let db_path = temp_dir.join("voicepipe.sqlite");
+        let ledger = Ledger::open(&db_path).expect("ledger should open");
+
+        ledger
+            .upsert_pending("episode-001")
+            .expect("pending should update");
+        ledger
+            .mark_downstream_synced(
+                "episode-001",
+                &DownstreamSyncMetadata {
+                    audio_sha256: "audio-hash".to_string(),
+                    episode_json_sha256: "json-hash".to_string(),
+                    audio_size_bytes: 10,
+                    episode_json_size_bytes: 20,
+                    downstream_status: "matched".to_string(),
+                    last_upload_method: "skip".to_string(),
+                },
+                false,
+            )
+            .expect("sync metadata should update");
+
+        let (
+            status,
+            audio_sha256,
+            episode_json_sha256,
+            audio_size_bytes,
+            episode_json_size_bytes,
+            downstream_synced_at,
+            downstream_status,
+            last_upload_method,
+            uploaded_at,
+        ): (
+            String,
+            String,
+            String,
+            u64,
+            u64,
+            String,
+            String,
+            String,
+            Option<String>,
+        ) = ledger
+            .connection
+            .query_row(
+                "SELECT status, audio_sha256, episode_json_sha256, audio_size_bytes, episode_json_size_bytes, downstream_synced_at, downstream_status, last_upload_method, uploaded_at FROM episodes WHERE episode_key = ?1",
+                params!["episode-001"],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                    ))
+                },
+            )
+            .expect("sync metadata should load");
+
+        assert_eq!(status, "uploaded");
+        assert_eq!(audio_sha256, "audio-hash");
+        assert_eq!(episode_json_sha256, "json-hash");
+        assert_eq!(audio_size_bytes, 10);
+        assert_eq!(episode_json_size_bytes, 20);
+        assert!(!downstream_synced_at.is_empty());
+        assert_eq!(downstream_status, "matched");
+        assert_eq!(last_upload_method, "skip");
+        assert!(uploaded_at.is_none());
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 }

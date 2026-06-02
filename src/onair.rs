@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -10,12 +10,13 @@ use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
+    artifact::{self, ArtifactMetadata},
     audio,
     cli::OnAirArgs,
     config::{self, ResolvedConfig},
-    downstream::DownstreamClient,
+    downstream::{DownstreamClient, DownstreamManifestEpisode, SyncEpisodeRequest, UploadMethod},
     ffmpeg,
-    ledger::Ledger,
+    ledger::{DownstreamSyncMetadata, Ledger},
     renderer, scenario,
     upstream::{EpisodeIndexItem, UpstreamClient},
 };
@@ -56,49 +57,49 @@ pub async fn run_onair_once(args: OnAirArgs) -> Result<()> {
         return Ok(());
     }
 
-    let ledger = Ledger::open(&audio::absolute_path(&loaded_config.values.onair_database)?)?;
-    let uploaded = ledger
-        .uploaded_episode_keys()?
-        .into_iter()
-        .collect::<HashSet<_>>();
-    let mut candidates = episodes
-        .into_iter()
-        .filter(|episode| !uploaded.contains(&episode.episode_key))
-        .collect::<Vec<_>>();
-
-    if let Some(limit) = args.limit {
-        candidates.truncate(limit);
-    }
-
-    println!("Unprocessed episodes: {}", candidates.len());
-    for episode in &candidates {
-        println!("- {}", episode.episode_key);
-    }
-
     let upload_url = loaded_config
         .values
         .downstream_upload_url
         .as_deref()
         .context("onair には [downstream].upload_url が必要です")?
         .to_string();
+    let downstream = DownstreamClient::new(resolve_downstream_access_token(&loaded_config.values));
+
+    println!("Fetching downstream manifest...");
+    let manifest = downstream.fetch_manifest(&upload_url).await?;
+    println!("Downstream manifest episodes: {}", manifest.len());
+    let manifest_by_episode_key = manifest
+        .into_iter()
+        .map(|episode| (episode.episode_key.clone(), episode))
+        .collect::<HashMap<_, _>>();
+
+    let ledger = Ledger::open(&audio::absolute_path(&loaded_config.values.onair_database)?)?;
+    let mut candidates = episodes;
+
+    if let Some(limit) = args.limit {
+        candidates.truncate(limit);
+    }
+
+    println!("Candidate episodes: {}", candidates.len());
+    for episode in &candidates {
+        println!("- {}", episode.episode_key);
+    }
 
     ffmpeg::ensure_available()?;
     ffmpeg::ensure_probe_available()?;
-    let downstream = DownstreamClient::new(resolve_downstream_access_token(&loaded_config.values));
 
     for episode in candidates {
-        match process_episode(
-            &loaded_config.values,
-            &upstream,
-            &downstream,
+        let context = ProcessEpisodeContext {
+            config: &loaded_config.values,
+            upstream: &upstream,
+            downstream: &downstream,
             upstream_url,
-            &upload_url,
-            &ledger,
-            &episode,
-        )
-        .await
-        {
-            Ok(()) => println!("Uploaded: {}", episode.episode_key),
+            upload_url: &upload_url,
+            ledger: &ledger,
+            downstream_state: manifest_by_episode_key.get(&episode.episode_key),
+        };
+        match process_episode(&context, &episode).await {
+            Ok(()) => println!("Processed: {}", episode.episode_key),
             Err(error) => {
                 println!("Failed: {}: {error:#}", episode.episode_key);
                 ledger.mark_failed(&episode.episode_key, &format!("{error:#}"))?;
@@ -111,25 +112,30 @@ pub async fn run_onair_once(args: OnAirArgs) -> Result<()> {
     Ok(())
 }
 
+struct ProcessEpisodeContext<'a> {
+    config: &'a ResolvedConfig,
+    upstream: &'a UpstreamClient,
+    downstream: &'a DownstreamClient,
+    upstream_url: &'a str,
+    upload_url: &'a str,
+    ledger: &'a Ledger,
+    downstream_state: Option<&'a DownstreamManifestEpisode>,
+}
+
 async fn process_episode(
-    config: &ResolvedConfig,
-    upstream: &UpstreamClient,
-    downstream: &DownstreamClient,
-    upstream_url: &str,
-    upload_url: &str,
-    ledger: &Ledger,
+    context: &ProcessEpisodeContext<'_>,
     episode: &EpisodeIndexItem,
 ) -> Result<()> {
     println!("Processing: {}", episode.episode_key);
-    ledger.upsert_pending(&episode.episode_key)?;
+    context.ledger.upsert_pending(&episode.episode_key)?;
 
-    let detail_url = episode_detail_url(upstream_url, &episode.episode_key);
+    let detail_url = episode_detail_url(context.upstream_url, &episode.episode_key);
     println!("Downloading Episode JSON: {detail_url}");
-    let raw_json = upstream.fetch_episode_json(&detail_url).await?;
+    let raw_json = context.upstream.fetch_episode_json(&detail_url).await?;
     let scenario = scenario::parse(&raw_json).context("Episode JSON を解析できません")?;
     scenario::validate(&scenario)?;
 
-    let episode_dir = onair_episode_dir(config, &episode.episode_key)?;
+    let episode_dir = onair_episode_dir(context.config, &episode.episode_key)?;
     fs::create_dir_all(&episode_dir).with_context(|| {
         format!(
             "onair episode ディレクトリを作成できません: {}",
@@ -139,19 +145,26 @@ async fn process_episode(
 
     let json_path = episode_dir.join("episode.json");
     write_file(&json_path, raw_json.as_bytes(), "Episode JSON")?;
-    ledger.mark_fetched(&episode.episode_key, &json_path)?;
+    context
+        .ledger
+        .mark_fetched(&episode.episode_key, &json_path)?;
 
     let audio_path = episode_dir.join("audio.mp3");
-    let workdir = onair_work_dir(config, &episode.episode_key)?;
+    let workdir = onair_work_dir(context.config, &episode.episode_key)?;
     println!("Recording MP3: {}", audio_path.display());
-    renderer::render_scenario_to_mp3(config, &scenario, audio_path.clone(), workdir.clone())
-        .await?;
+    renderer::render_scenario_to_mp3(
+        context.config,
+        &scenario,
+        audio_path.clone(),
+        workdir.clone(),
+    )
+    .await?;
     let audio_duration_seconds = ffmpeg::probe_duration_seconds(&audio_path)?;
     let recorded_at = current_utc_rfc3339()?;
     println!("Recording completed:");
     println!("recorded_at={recorded_at}");
     println!("audio_duration_seconds={audio_duration_seconds}");
-    ledger.mark_recorded(
+    context.ledger.mark_recorded(
         &episode.episode_key,
         &audio_path,
         &recorded_at,
@@ -163,7 +176,7 @@ async fn process_episode(
 
     let render_metadata_path = episode_dir.join("render_metadata.json");
     write_render_metadata(
-        config,
+        context.config,
         &episode.episode_key,
         &upload_json_path,
         &audio_path,
@@ -172,21 +185,132 @@ async fn process_episode(
         &render_metadata_path,
     )?;
 
-    println!("Uploading episode...");
-    downstream
-        .upload_episode(
-            upload_url,
-            &upload_json_path,
-            &audio_path,
-            &render_metadata_path,
-            &recorded_at,
-            audio_duration_seconds,
-        )
-        .await?;
-    ledger.mark_uploaded(&episode.episode_key)?;
-    println!("Upload completed.");
+    let sync_artifacts = calculate_sync_artifacts(&audio_path, &upload_json_path)?;
+    println!("Local artifact metadata:");
+    println!("audio_sha256={}", sync_artifacts.audio.sha256);
+    println!("episode_json_sha256={}", sync_artifacts.episode_json.sha256);
+    println!("audio_size_bytes={}", sync_artifacts.audio.size_bytes);
+    println!(
+        "episode_json_size_bytes={}",
+        sync_artifacts.episode_json.size_bytes
+    );
+
+    let decision = decide_downstream_sync(context.downstream_state, &sync_artifacts);
+    println!("Downstream state:");
+    println!("{}", decision.reason);
+    println!("Action: {}", decision.last_upload_method.to_uppercase());
+
+    if let Some(method) = decision.upload_method {
+        println!("Uploading episode...");
+        context
+            .downstream
+            .sync_episode(SyncEpisodeRequest {
+                method,
+                upload_url: context.upload_url,
+                episode_key: &episode.episode_key,
+                json_path: &upload_json_path,
+                audio_path: &audio_path,
+                render_metadata_path: &render_metadata_path,
+                recorded_at: &recorded_at,
+                audio_duration_seconds,
+            })
+            .await?;
+        println!("Upload completed.");
+    } else {
+        println!("Upload skipped.");
+    }
+
+    context.ledger.mark_downstream_synced(
+        &episode.episode_key,
+        &DownstreamSyncMetadata {
+            audio_sha256: sync_artifacts.audio.sha256,
+            episode_json_sha256: sync_artifacts.episode_json.sha256,
+            audio_size_bytes: sync_artifacts.audio.size_bytes,
+            episode_json_size_bytes: sync_artifacts.episode_json.size_bytes,
+            downstream_status: decision.downstream_status.to_string(),
+            last_upload_method: decision.last_upload_method.to_string(),
+        },
+        decision.upload_method.is_some(),
+    )?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SyncArtifacts {
+    audio: ArtifactMetadata,
+    episode_json: ArtifactMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SyncDecision {
+    upload_method: Option<UploadMethod>,
+    downstream_status: &'static str,
+    last_upload_method: &'static str,
+    reason: String,
+}
+
+fn calculate_sync_artifacts(audio_path: &Path, upload_json_path: &Path) -> Result<SyncArtifacts> {
+    Ok(SyncArtifacts {
+        audio: artifact::calculate_metadata(audio_path)?,
+        episode_json: artifact::calculate_metadata(upload_json_path)?,
+    })
+}
+
+fn decide_downstream_sync(
+    downstream_state: Option<&DownstreamManifestEpisode>,
+    artifacts: &SyncArtifacts,
+) -> SyncDecision {
+    let Some(downstream_state) = downstream_state else {
+        return SyncDecision {
+            upload_method: Some(UploadMethod::Post),
+            downstream_status: "created",
+            last_upload_method: UploadMethod::Post.as_str(),
+            reason: "episode is missing from downstream manifest".to_string(),
+        };
+    };
+
+    let mut mismatches = Vec::new();
+    if !optional_hash_matches(
+        downstream_state.audio_sha256.as_deref(),
+        &artifacts.audio.sha256,
+    ) {
+        mismatches.push(match downstream_state.audio_sha256.as_deref() {
+            Some(_) => "audio hash mismatch",
+            None => "audio hash missing",
+        });
+    }
+    if !optional_hash_matches(
+        downstream_state.episode_json_sha256.as_deref(),
+        &artifacts.episode_json.sha256,
+    ) {
+        mismatches.push(match downstream_state.episode_json_sha256.as_deref() {
+            Some(_) => "episode JSON hash mismatch",
+            None => "episode JSON hash missing",
+        });
+    }
+
+    if mismatches.is_empty() {
+        SyncDecision {
+            upload_method: None,
+            downstream_status: "matched",
+            last_upload_method: "skip",
+            reason: "already synchronized".to_string(),
+        }
+    } else {
+        SyncDecision {
+            upload_method: Some(UploadMethod::Put),
+            downstream_status: "repaired",
+            last_upload_method: UploadMethod::Put.as_str(),
+            reason: mismatches.join(", "),
+        }
+    }
+}
+
+fn optional_hash_matches(downstream_hash: Option<&str>, local_hash: &str) -> bool {
+    downstream_hash
+        .map(|value| value.eq_ignore_ascii_case(local_hash))
+        .unwrap_or(false)
 }
 
 fn resolve_upstream_access_token(config: &ResolvedConfig) -> Option<String> {
@@ -458,5 +582,67 @@ mod tests {
             value["episode"]["scenario_json"]["sections"][0]["estimated_duration_seconds"],
             json!(60)
         );
+    }
+
+    #[test]
+    fn downstream_sync_decision_posts_when_episode_missing() {
+        let artifacts = test_sync_artifacts();
+
+        let decision = decide_downstream_sync(None, &artifacts);
+
+        assert_eq!(decision.upload_method, Some(UploadMethod::Post));
+        assert_eq!(decision.last_upload_method, "post");
+        assert_eq!(decision.downstream_status, "created");
+    }
+
+    #[test]
+    fn downstream_sync_decision_skips_when_hashes_match() {
+        let artifacts = test_sync_artifacts();
+        let downstream = DownstreamManifestEpisode {
+            episode_key: "episode-001".to_string(),
+            audio_sha256: Some("AUDIO-HASH".to_string()),
+            episode_json_sha256: Some("json-hash".to_string()),
+            audio_size_bytes: Some(10),
+            episode_json_size_bytes: Some(20),
+        };
+
+        let decision = decide_downstream_sync(Some(&downstream), &artifacts);
+
+        assert_eq!(decision.upload_method, None);
+        assert_eq!(decision.last_upload_method, "skip");
+        assert_eq!(decision.downstream_status, "matched");
+    }
+
+    #[test]
+    fn downstream_sync_decision_puts_when_hashes_differ_or_missing() {
+        let artifacts = test_sync_artifacts();
+        let downstream = DownstreamManifestEpisode {
+            episode_key: "episode-001".to_string(),
+            audio_sha256: Some("other-audio-hash".to_string()),
+            episode_json_sha256: None,
+            audio_size_bytes: Some(10),
+            episode_json_size_bytes: Some(20),
+        };
+
+        let decision = decide_downstream_sync(Some(&downstream), &artifacts);
+
+        assert_eq!(decision.upload_method, Some(UploadMethod::Put));
+        assert_eq!(decision.last_upload_method, "put");
+        assert_eq!(decision.downstream_status, "repaired");
+        assert!(decision.reason.contains("audio hash mismatch"));
+        assert!(decision.reason.contains("episode JSON hash missing"));
+    }
+
+    fn test_sync_artifacts() -> SyncArtifacts {
+        SyncArtifacts {
+            audio: ArtifactMetadata {
+                sha256: "audio-hash".to_string(),
+                size_bytes: 10,
+            },
+            episode_json: ArtifactMetadata {
+                sha256: "json-hash".to_string(),
+                size_bytes: 20,
+            },
+        }
     }
 }

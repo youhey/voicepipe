@@ -269,6 +269,19 @@ Do not make `voicepipe` depend on upstream topic selection, editorial status, sc
 
 Before uploading Episode JSON downstream, `onair` should replace `episode.scenario_json.sections[].estimated_duration_seconds` with measured durations from the generated section WAV files. The original downloaded Episode JSON artifact should remain unchanged; write a generated upload copy when mutation is needed.
 
+## Downstream Synchronization
+
+The downstream manifest is the authoritative source for synchronization checks.
+
+Before uploading an episode:
+
+1. Compare local hashes against downstream manifest.
+2. Use POST for missing episodes.
+3. Use PUT for mismatched episodes.
+4. Skip upload when hashes match.
+
+Do not automatically delete downstream episodes.
+
 ## radiopipe Web API Contract
 
 When implementing or changing code that consumes the public radiopipe Web API, treat the OpenAPI document in the radiopipe repository as the source of truth:

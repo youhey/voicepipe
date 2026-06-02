@@ -1,3 +1,4 @@
+mod artifact;
 mod audio;
 mod cli;
 mod config;

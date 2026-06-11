@@ -4,6 +4,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use chrono_tz::Tz;
+use clap::ValueEnum;
 use serde::Deserialize;
 
 use crate::{
@@ -53,9 +55,34 @@ pub struct ResolvedConfig {
     pub format: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum DaemonMode {
+    Interval,
+    Schedule,
+}
+
+impl std::fmt::Display for DaemonMode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interval => formatter.write_str("interval"),
+            Self::Schedule => formatter.write_str("schedule"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
+    pub mode: DaemonMode,
     pub interval: u64,
+    pub schedule: DaemonScheduleConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct DaemonScheduleConfig {
+    pub enabled: bool,
+    pub timezone: String,
+    pub times: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +136,16 @@ struct FileDownstreamConfig {
 
 #[derive(Debug, Deserialize)]
 struct FileDaemonConfig {
+    mode: Option<DaemonMode>,
     interval: Option<u64>,
+    schedule: Option<FileDaemonScheduleConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileDaemonScheduleConfig {
+    enabled: Option<bool>,
+    timezone: Option<String>,
+    times: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,7 +233,21 @@ impl Default for ResolvedConfig {
 
 impl Default for DaemonConfig {
     fn default() -> Self {
-        Self { interval: 300 }
+        Self {
+            mode: DaemonMode::Interval,
+            interval: 300,
+            schedule: DaemonScheduleConfig::default(),
+        }
+    }
+}
+
+impl Default for DaemonScheduleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timezone: "Asia/Tokyo".to_string(),
+            times: vec!["09:00".to_string(), "14:00".to_string()],
+        }
     }
 }
 
@@ -291,6 +341,27 @@ impl ResolvedConfig {
         if self.daemon.interval == 0 {
             bail!("daemon.interval は 1 以上を指定してください");
         }
+        if self.daemon.mode == DaemonMode::Schedule || self.daemon.schedule.enabled {
+            if self.daemon.schedule.timezone.trim().is_empty() {
+                bail!("daemon.schedule.timezone は空にできません");
+            }
+            self.daemon
+                .schedule
+                .timezone
+                .parse::<Tz>()
+                .with_context(|| {
+                    format!(
+                        "daemon.schedule.timezone が不正です: {}",
+                        self.daemon.schedule.timezone
+                    )
+                })?;
+            if self.daemon.schedule.times.is_empty() {
+                bail!("daemon.schedule.times は 1 件以上指定してください");
+            }
+            for time in &self.daemon.schedule.times {
+                validate_schedule_time(time)?;
+            }
+        }
         if self.keepalive.interval == 0 {
             bail!("keepalive.interval は 1 以上を指定してください");
         }
@@ -364,10 +435,24 @@ impl FileConfig {
             }
         }
 
-        if let Some(daemon) = self.daemon
-            && let Some(value) = daemon.interval
-        {
-            resolved.daemon.interval = value;
+        if let Some(daemon) = self.daemon {
+            if let Some(value) = daemon.mode {
+                resolved.daemon.mode = value;
+            }
+            if let Some(value) = daemon.interval {
+                resolved.daemon.interval = value;
+            }
+            if let Some(schedule) = daemon.schedule {
+                if let Some(value) = schedule.enabled {
+                    resolved.daemon.schedule.enabled = value;
+                }
+                if let Some(value) = schedule.timezone {
+                    resolved.daemon.schedule.timezone = value;
+                }
+                if let Some(value) = schedule.times {
+                    resolved.daemon.schedule.times = value;
+                }
+            }
         }
 
         if let Some(storage) = self.storage {
@@ -519,6 +604,26 @@ fn validate_scale(name: &str, value: f64) -> Result<()> {
     Ok(())
 }
 
+fn validate_schedule_time(value: &str) -> Result<()> {
+    let Some((hour, minute)) = value.split_once(':') else {
+        bail!("daemon.schedule.times は HH:MM 形式で指定してください: {value}");
+    };
+    if hour.len() != 2 || minute.len() != 2 {
+        bail!("daemon.schedule.times は HH:MM 形式で指定してください: {value}");
+    }
+    let hour = hour
+        .parse::<u32>()
+        .with_context(|| format!("daemon.schedule.times の hour が不正です: {value}"))?;
+    let minute = minute
+        .parse::<u32>()
+        .with_context(|| format!("daemon.schedule.times の minute が不正です: {value}"))?;
+    if hour > 23 || minute > 59 {
+        bail!("daemon.schedule.times の時刻が範囲外です: {value}");
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,7 +669,13 @@ mod tests {
             work_dir = "custom/work/onair"
 
             [daemon]
+            mode = "schedule"
             interval = 120
+
+            [daemon.schedule]
+            enabled = true
+            timezone = "Asia/Tokyo"
+            times = ["09:00", "14:00"]
 
             [keepalive]
             enabled = true
@@ -614,7 +725,14 @@ mod tests {
         assert_eq!(parsed.storage_json_dir, PathBuf::from("custom/json"));
         assert_eq!(parsed.storage_audio_dir, PathBuf::from("custom/audio"));
         assert_eq!(parsed.storage_preview_dir, PathBuf::from("custom/preview"));
+        assert_eq!(parsed.daemon.mode, DaemonMode::Schedule);
         assert_eq!(parsed.daemon.interval, 120);
+        assert!(parsed.daemon.schedule.enabled);
+        assert_eq!(parsed.daemon.schedule.timezone, "Asia/Tokyo");
+        assert_eq!(
+            parsed.daemon.schedule.times,
+            vec!["09:00".to_string(), "14:00".to_string()]
+        );
         assert!(parsed.keepalive.enabled);
         assert_eq!(
             parsed.keepalive.urls,
@@ -752,6 +870,31 @@ mod tests {
         assert!(error.to_string().contains("設定ファイルが見つかりません"));
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn rejects_invalid_schedule_time() {
+        let mut config = ResolvedConfig {
+            daemon: DaemonConfig {
+                mode: DaemonMode::Schedule,
+                interval: 300,
+                schedule: DaemonScheduleConfig {
+                    enabled: true,
+                    timezone: "Asia/Tokyo".to_string(),
+                    times: vec!["9:00".to_string()],
+                },
+            },
+            ..ResolvedConfig::default()
+        };
+
+        let error = config.validate().expect_err("invalid schedule should fail");
+        assert!(error.to_string().contains("HH:MM"));
+
+        config.daemon.schedule.times = vec!["24:00".to_string()];
+        let error = config
+            .validate()
+            .expect_err("out-of-range schedule should fail");
+        assert!(error.to_string().contains("範囲外"));
     }
 
     fn resolve_toml(source: &str) -> ResolvedConfig {

@@ -136,6 +136,17 @@ cp voicepipe.example.toml voicepipe.toml
 ```
 
 Edit `voicepipe.toml` for the real upstream/downstream URLs and tokens. Do not commit `voicepipe.toml`.
+The Docker example config uses schedule mode with the initial JST schedule:
+
+```toml
+[daemon]
+mode = "schedule"
+
+[daemon.schedule]
+enabled = true
+timezone = "Asia/Tokyo"
+times = ["09:00", "14:00"]
+```
 
 Inside Docker Compose, `voicepipe` must connect to VOICEVOX by service name:
 
@@ -177,7 +188,14 @@ docker compose run --rm voicepipe onair
 docker compose run --rm voicepipe preview --help
 ```
 
-Phase A only supports interval-based daemon operation. Fixed-time scheduling such as JST 09:00 / 14:00 is intentionally not implemented yet.
+Docker daemon operation supports both interval mode and fixed-time schedule mode. The example config uses schedule mode with `Asia/Tokyo` and `09:00` / `14:00`.
+
+To migrate existing local state into Docker, create a dump on the source machine and restore it on the Docker host:
+
+```bash
+cargo run -- dump --output voicepipe-dump.tar.gz
+docker compose run --rm voicepipe restore --input voicepipe-dump.tar.gz
+```
 
 Record from an upstream API and save the exact Episode JSON used for recording:
 
@@ -270,7 +288,13 @@ upload_url = "https://example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
 
 [daemon]
+mode = "interval"
 interval = 300
+
+[daemon.schedule]
+enabled = false
+timezone = "Asia/Tokyo"
+times = ["09:00", "14:00"]
 
 [onair]
 database = "dist/onair/onair.sqlite"
@@ -436,17 +460,40 @@ Older local generated files under `storage/` are not migrated automatically and 
 
 ## Daemon
 
-`daemon` periodically runs the same `run_onair_once` workflow used by `onair`. It does not duplicate discovery, recording, upload, or SQLite logic.
+`daemon` runs the same `run_onair_once` workflow used by `onair`. It does not duplicate discovery, recording, upload, or SQLite logic.
 
 ```bash
 cargo run -- daemon
 cargo run -- daemon --once
 cargo run -- daemon --interval 300
+cargo run -- daemon --mode schedule --timezone Asia/Tokyo --schedule-time 09:00 --schedule-time 14:00
 cargo run -- daemon --limit 1
 cargo run -- daemon --dry-run
 ```
 
-The default interval is `300` seconds. `[daemon].interval` configures the interval, and `--interval` overrides it. `--once` runs one cycle and exits. `--limit` and `--dry-run` are passed through to the onair cycle.
+Interval mode is the backward-compatible default:
+
+```toml
+[daemon]
+mode = "interval"
+interval = 300
+```
+
+The default interval is `300` seconds. `[daemon].interval` configures the interval, and `--interval` overrides it. `--once` runs one cycle and exits after that interval cycle. `--limit` and `--dry-run` are passed through to the onair cycle.
+
+Schedule mode runs `onair` at fixed local times using the configured timezone. It does not rely on the container timezone.
+
+```toml
+[daemon]
+mode = "schedule"
+
+[daemon.schedule]
+enabled = true
+timezone = "Asia/Tokyo"
+times = ["09:00", "14:00"]
+```
+
+Schedule times use `HH:MM` format. Invalid values are rejected during config validation. Missed runs while the daemon was offline are not backfilled in this phase; the daemon waits for the next future slot. Schedule execution history is stored in the same SQLite database under `schedule_runs`, and completed slots are not run again after a restart. If a previous scheduled onair run is still active when another slot arrives, that slot is recorded as `skipped`.
 
 Before entering the loop, `daemon` validates ffmpeg and ffprobe availability, SQLite writability, and `dist` / `work` writability. It also checks VOICEVOX and upstream reachability, but startup reachability failures are logged as warnings so the container can stay alive while dependent services finish starting. A failed episode is recorded by the onair workflow and does not stop the cycle. If one cycle fails, the daemon logs the error and continues with the next interval.
 
@@ -461,6 +508,53 @@ urls = ["https://example.com/health"]
 interval = 300
 timeout = 10
 ```
+
+## Dump and Restore
+
+`dump` and `restore` export/import the local voicepipe state as a `tar.gz` archive for migration between machines or into Docker-based operation.
+
+```bash
+cargo run -- dump --output voicepipe-dump.tar.gz
+cargo run -- restore --input voicepipe-dump.tar.gz
+```
+
+The dump archive contains:
+
+```txt
+manifest.json
+config/
+  voicepipe.toml
+database/
+  onair.sqlite
+episodes/
+  {episode_key}/
+    episode.json
+    audio.mp3
+    render_metadata.json
+```
+
+The canonical source layout is:
+
+```txt
+dist/
+  onair/
+    onair.sqlite
+    episodes/
+```
+
+`dump` also supports the legacy `storage/` layout. It auto-detects legacy data when the canonical layout is not present, or it can be forced:
+
+```bash
+cargo run -- dump --output voicepipe-dump.tar.gz --legacy-storage
+```
+
+`restore` always imports into the canonical `dist/onair` layout and restores `voicepipe.toml` to the project root. It refuses to overwrite existing `voicepipe.toml`, `dist/onair/onair.sqlite`, or existing episode artifacts by default:
+
+```bash
+cargo run -- restore --input voicepipe-dump.tar.gz --force
+```
+
+SQLite is treated as a file artifact. `restore` does not perform row-level merges.
 
 ## Record
 

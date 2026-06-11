@@ -17,6 +17,7 @@ upload_url = "https://example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
 
 [daemon]
+mode = "interval"
 interval = 300
 
 [onair]

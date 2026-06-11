@@ -17,7 +17,13 @@ upload_url = "https://downstream.example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
 
 [daemon]
+mode = "schedule"
 interval = 300
+
+[daemon.schedule]
+enabled = true
+timezone = "Asia/Tokyo"
+times = ["09:00", "14:00"]
 
 [onair]
 database = "dist/onair/onair.sqlite"

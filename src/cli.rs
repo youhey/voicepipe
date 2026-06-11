@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::config::ConfigOverrides;
+use crate::config::{ConfigOverrides, DaemonMode};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -19,11 +19,17 @@ pub enum Commands {
     /// Periodically run the onair workflow.
     Daemon(DaemonArgs),
 
+    /// Export configuration, SQLite ledger, and generated episode artifacts.
+    Dump(DumpArgs),
+
     /// Discover upstream episodes, record audio, upload downstream, and track state.
     Onair(OnAirArgs),
 
     /// Record an episode from a local JSON file or upstream API into an MP3 file.
     Record(RecordArgs),
+
+    /// Restore configuration, SQLite ledger, and generated episode artifacts.
+    Restore(RestoreArgs),
 
     /// Legacy local JSON rendering command.
     Render(RenderArgs),
@@ -42,6 +48,28 @@ pub enum Commands {
 pub enum RecordSource {
     Upstream,
     Json,
+}
+
+#[derive(Debug, Args)]
+pub struct DumpArgs {
+    /// Output tar.gz archive path.
+    #[arg(long)]
+    pub output: PathBuf,
+
+    /// Export from legacy storage/ layout instead of dist/onair.
+    #[arg(long)]
+    pub legacy_storage: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RestoreArgs {
+    /// Input tar.gz archive path.
+    #[arg(long)]
+    pub input: PathBuf,
+
+    /// Replace existing voicepipe.toml, onair.sqlite, and episode artifacts.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Args)]
@@ -96,6 +124,18 @@ pub struct DaemonArgs {
     /// Seconds to wait between onair cycles.
     #[arg(long)]
     pub interval: Option<u64>,
+
+    /// Daemon execution mode.
+    #[arg(long, value_enum)]
+    pub mode: Option<DaemonMode>,
+
+    /// Fixed onair schedule time in HH:MM. Can be specified multiple times.
+    #[arg(long = "schedule-time")]
+    pub schedule_times: Vec<String>,
+
+    /// Timezone for fixed-time schedule mode.
+    #[arg(long)]
+    pub timezone: Option<String>,
 
     /// Run one onair cycle and exit.
     #[arg(long)]

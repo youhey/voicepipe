@@ -522,7 +522,30 @@ Inside Docker Compose, voicepipe must use `http://voicevox:50021` as the VOICEVO
 
 Generated data must be persisted through mounted `dist/` and `work/` directories.
 
-Do not implement fixed-time scheduling in the Docker phase unless explicitly requested.
+## Dump and Restore
+
+voicepipe supports `dump` and `restore` for migrating local state between machines or into Docker-based operation.
+
+The canonical storage layout is:
+
+```txt
+dist/
+  onair/
+    onair.sqlite
+    episodes/
+```
+
+Restore operations must be safe by default and must not overwrite existing `voicepipe.toml`, SQLite ledger data, or episode artifacts unless the user explicitly requests replacement with `--force`.
+
+## Daemon Scheduling
+
+The daemon supports interval mode and fixed-time schedule mode.
+
+Fixed-time schedule mode must use explicit timezone-aware scheduling and must not rely only on the container timezone.
+
+Do not duplicate onair logic inside scheduling code.
+
+Use the shared onair workflow and store schedule execution state in SQLite to prevent duplicate runs.
 
 The daemon must remain a thin orchestration layer. Business logic belongs to `record` and `onair`; daemon code must reuse the existing onair workflow, especially `run_onair_once`, and must not duplicate discovery, recording, upload, section duration, or SQLite ledger logic.
 Daemon keepalive is an independent auxiliary loop. It may read `[keepalive]` config and issue HTTP GET requests, but keepalive failures must only produce warnings and must not fail daemon or onair processing.

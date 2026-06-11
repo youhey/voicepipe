@@ -7,6 +7,7 @@ mod doctor;
 mod downstream;
 mod ffmpeg;
 mod ledger;
+mod migration;
 mod onair;
 mod renderer;
 mod scenario;
@@ -25,8 +26,10 @@ async fn main() -> Result<()> {
 
     match Cli::parse().command {
         Commands::Daemon(args) => daemon::run(args).await,
+        Commands::Dump(args) => migration::dump(args),
         Commands::Onair(args) => onair::run(args).await,
         Commands::Record(args) => renderer::record(args).await,
+        Commands::Restore(args) => migration::restore(args),
         Commands::Render(args) => renderer::render(args).await,
         Commands::Preview(args) => renderer::preview(args).await,
         Commands::Speakers(args) => voicevox::print_speakers(args).await,

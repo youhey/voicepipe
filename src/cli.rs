@@ -94,8 +94,8 @@ pub struct DaemonArgs {
     pub config: Option<PathBuf>,
 
     /// Seconds to wait between onair cycles.
-    #[arg(long, default_value_t = 300)]
-    pub interval: u64,
+    #[arg(long)]
+    pub interval: Option<u64>,
 
     /// Run one onair cycle and exit.
     #[arg(long)]

@@ -16,6 +16,7 @@ pub const CONFIG_STACK: [&str; 3] = [
     "voicepipe.dist.toml",
     "voicepipe.override.toml",
 ];
+pub const CONFIG_ENV: &str = "VOICEPIPE_CONFIG";
 pub const DEFAULT_AUDIO_FORMAT: &str = "mp3";
 
 #[derive(Debug, Clone)]
@@ -43,12 +44,18 @@ pub struct ResolvedConfig {
     pub storage_json_dir: PathBuf,
     pub storage_audio_dir: PathBuf,
     pub storage_preview_dir: PathBuf,
+    pub daemon: DaemonConfig,
     pub keepalive: KeepAliveConfig,
     pub voicevox_endpoint: String,
     pub speaker: u32,
     pub voice: VoiceOptions,
     pub bitrate: String,
     pub format: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DaemonConfig {
+    pub interval: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +86,7 @@ struct FileConfig {
     preview: Option<FilePathConfig>,
     upstream: Option<FileUpstreamConfig>,
     downstream: Option<FileDownstreamConfig>,
+    daemon: Option<FileDaemonConfig>,
     onair: Option<FileOnairConfig>,
     keepalive: Option<FileKeepAliveConfig>,
     storage: Option<FileStorageConfig>,
@@ -97,6 +105,11 @@ struct FileUpstreamConfig {
 struct FileDownstreamConfig {
     upload_url: Option<String>,
     access_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileDaemonConfig {
+    interval: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +184,7 @@ impl Default for ResolvedConfig {
             storage_json_dir: PathBuf::from("dist/json"),
             storage_audio_dir: PathBuf::from("dist/record"),
             storage_preview_dir: PathBuf::from("dist/preview"),
+            daemon: DaemonConfig::default(),
             keepalive: KeepAliveConfig::default(),
             voicevox_endpoint: DEFAULT_VOICEVOX_ENDPOINT.to_string(),
             speaker: DEFAULT_SPEAKER,
@@ -178,6 +192,12 @@ impl Default for ResolvedConfig {
             bitrate: DEFAULT_OUTPUT_BITRATE.to_string(),
             format: DEFAULT_AUDIO_FORMAT.to_string(),
         }
+    }
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self { interval: 300 }
     }
 }
 
@@ -268,6 +288,9 @@ impl ResolvedConfig {
         if self.format != DEFAULT_AUDIO_FORMAT {
             bail!("audio.format は mp3 のみ対応しています: {}", self.format);
         }
+        if self.daemon.interval == 0 {
+            bail!("daemon.interval は 1 以上を指定してください");
+        }
         if self.keepalive.interval == 0 {
             bail!("keepalive.interval は 1 以上を指定してください");
         }
@@ -339,6 +362,12 @@ impl FileConfig {
             if let Some(value) = downstream.access_token {
                 resolved.downstream_access_token = Some(value);
             }
+        }
+
+        if let Some(daemon) = self.daemon
+            && let Some(value) = daemon.interval
+        {
+            resolved.daemon.interval = value;
         }
 
         if let Some(storage) = self.storage {
@@ -425,7 +454,16 @@ impl FileConfig {
 }
 
 pub fn load(path: Option<&Path>) -> Result<LoadedConfig> {
-    load_with_base(path, Path::new("."))
+    match path {
+        Some(path) => load_with_base(Some(path), Path::new(".")),
+        None => {
+            if let Some(path) = env_config_path() {
+                load_with_base(Some(&path), Path::new("."))
+            } else {
+                load_with_base(None, Path::new("."))
+            }
+        }
+    }
 }
 
 fn load_with_base(path: Option<&Path>, base_dir: &Path) -> Result<LoadedConfig> {
@@ -456,6 +494,14 @@ fn existing_config_stack(base_dir: &Path) -> Vec<PathBuf> {
         .map(|name| base_dir.join(name))
         .filter(|path| path.exists())
         .collect()
+}
+
+fn env_config_path() -> Option<PathBuf> {
+    std::env::var(CONFIG_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 fn load_file(path: &Path) -> Result<FileConfig> {
@@ -517,6 +563,9 @@ mod tests {
             episodes_dir = "custom/onair/episodes"
             work_dir = "custom/work/onair"
 
+            [daemon]
+            interval = 120
+
             [keepalive]
             enabled = true
             urls = ["https://example.com/health"]
@@ -565,6 +614,7 @@ mod tests {
         assert_eq!(parsed.storage_json_dir, PathBuf::from("custom/json"));
         assert_eq!(parsed.storage_audio_dir, PathBuf::from("custom/audio"));
         assert_eq!(parsed.storage_preview_dir, PathBuf::from("custom/preview"));
+        assert_eq!(parsed.daemon.interval, 120);
         assert!(parsed.keepalive.enabled);
         assert_eq!(
             parsed.keepalive.urls,

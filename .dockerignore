@@ -1,0 +1,13 @@
+/target/
+/dist/
+/work/
+/storage/
+/voicepipe.toml
+/voicepipe.dist.toml
+/voicepipe.override.toml
+/.git/
+/.github/
+/.DS_Store
+*.log
+*.mp3
+*.wav

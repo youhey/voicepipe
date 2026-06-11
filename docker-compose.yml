@@ -1,0 +1,17 @@
+services:
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-latest
+    restart: unless-stopped
+
+  voicepipe:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - voicevox
+    command: ["daemon"]
+    environment:
+      VOICEPIPE_CONFIG: /app/voicepipe.toml
+    volumes:
+      - ./voicepipe.toml:/app/voicepipe.toml:ro
+      - ./dist:/app/dist
+      - ./work:/app/work

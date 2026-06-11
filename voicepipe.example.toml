@@ -9,11 +9,11 @@ output = "dist/preview/preview.mp3"
 workdir = "work/preview"
 
 [upstream]
-episode_url = "https://example.com/api/episodes"
+episode_url = "https://upstream.example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
 
 [downstream]
-upload_url = "https://example.com/api/episodes"
+upload_url = "https://downstream.example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
 
 [daemon]
@@ -25,9 +25,12 @@ episodes_dir = "dist/onair/episodes"
 work_dir = "work/onair"
 
 [keepalive]
-enabled = false
-urls = []
-interval = 300
+enabled = true
+urls = [
+  "https://upstream.example.com",
+  "https://downstream.example.com",
+]
+interval = 120
 timeout = 10
 
 [storage]
@@ -37,7 +40,7 @@ audio_dir = "dist/record"
 preview_dir = "dist/preview"
 
 [voicevox]
-endpoint = "http://127.0.0.1:50021"
+endpoint = "http://voicevox:50021"
 speaker = 3
 
 [voice]

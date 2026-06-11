@@ -122,6 +122,63 @@ cargo run -- record \
 
 The command reads `episode.scenario_json.sections[]`, synthesizes each section into a WAV file under the work directory, writes `concat.ffconcat` and `combined.wav`, then encodes the final MP3 with ffmpeg.
 
+## Docker Compose
+
+Docker daemon operation is intended for home server automation. The Compose setup runs two services:
+
+- `voicevox`: VOICEVOX Engine
+- `voicepipe`: `voicepipe daemon`
+
+Create a local Docker configuration from the committed example:
+
+```bash
+cp voicepipe.example.toml voicepipe.toml
+```
+
+Edit `voicepipe.toml` for the real upstream/downstream URLs and tokens. Do not commit `voicepipe.toml`.
+
+Inside Docker Compose, `voicepipe` must connect to VOICEVOX by service name:
+
+```toml
+[voicevox]
+endpoint = "http://voicevox:50021"
+```
+
+Do not use `http://127.0.0.1:50021` inside the `voicepipe` container.
+
+Build and start the services:
+
+```bash
+make docker-build
+make docker-up
+make docker-logs
+```
+
+Stop the services:
+
+```bash
+make docker-down
+```
+
+The Compose file mounts persistent runtime directories:
+
+```txt
+./dist:/app/dist
+./work:/app/work
+```
+
+`dist/` contains final audio, downloaded/generated JSON, render metadata, and the onair SQLite ledger. `work/` contains intermediate WAV and ffmpeg files. Docker helper targets do not remove these directories.
+
+The `voicepipe` image uses `voicepipe` as its entrypoint, so the container can also run other commands when needed:
+
+```bash
+docker compose run --rm voicepipe doctor
+docker compose run --rm voicepipe onair
+docker compose run --rm voicepipe preview --help
+```
+
+Phase A only supports interval-based daemon operation. Fixed-time scheduling such as JST 09:00 / 14:00 is intentionally not implemented yet.
+
 Record from an upstream API and save the exact Episode JSON used for recording:
 
 ```bash
@@ -191,6 +248,7 @@ dist/preview/preview_speaker8_speed120_pitch005_intonation100_pause120.mp3
 ## Configuration
 
 The committed template is `voicepipe.sample.toml`. `voicepipe.toml`, `voicepipe.dist.toml`, and `voicepipe.override.toml` are ignored by git. Because the default stack reads `voicepipe.dist.toml` after `voicepipe.toml`, put local overrides in `voicepipe.override.toml` or pass an explicit file with `--config`.
+`voicepipe.example.toml` is the Docker Compose oriented template and uses `http://voicevox:50021` for the VOICEVOX endpoint.
 
 ```toml
 [render]
@@ -210,6 +268,9 @@ episode_url = "https://example.com/api/episodes"
 [downstream]
 upload_url = "https://example.com/api/episodes"
 # access_token = "replace-with-local-token-or-use-env"
+
+[daemon]
+interval = 300
 
 [onair]
 database = "dist/onair/onair.sqlite"
@@ -271,6 +332,8 @@ voicepipe.override.toml
 Later files override earlier files. If none of these files exists, voicepipe exits with an error instead of silently using only built-in defaults.
 
 If `--config` is specified, voicepipe loads only that file and ignores `voicepipe.toml`, `voicepipe.dist.toml`, and `voicepipe.override.toml`.
+
+If `VOICEPIPE_CONFIG` is set and `--config` is omitted, voicepipe loads that file. Docker Compose sets `VOICEPIPE_CONFIG=/app/voicepipe.toml`.
 
 Upstream access tokens are resolved in this order:
 
@@ -383,13 +446,13 @@ cargo run -- daemon --limit 1
 cargo run -- daemon --dry-run
 ```
 
-The default interval is `300` seconds. `--once` runs one cycle and exits. `--limit` and `--dry-run` are passed through to the onair cycle.
+The default interval is `300` seconds. `[daemon].interval` configures the interval, and `--interval` overrides it. `--once` runs one cycle and exits. `--limit` and `--dry-run` are passed through to the onair cycle.
 
-Before entering the loop, `daemon` validates VOICEVOX reachability, ffmpeg and ffprobe availability, upstream reachability, SQLite writability, and `dist` / `work` writability. A failed episode is recorded by the onair workflow and does not stop the cycle. If one cycle fails, the daemon logs the error and continues with the next interval.
+Before entering the loop, `daemon` validates ffmpeg and ffprobe availability, SQLite writability, and `dist` / `work` writability. It also checks VOICEVOX and upstream reachability, but startup reachability failures are logged as warnings so the container can stay alive while dependent services finish starting. A failed episode is recorded by the onair workflow and does not stop the cycle. If one cycle fails, the daemon logs the error and continues with the next interval.
 
 Ctrl+C requests a graceful shutdown. The daemon finishes the current operation, stops before the next cycle, and exits cleanly.
 
-When `[keepalive].enabled = true` and `[keepalive].urls` is not empty, `daemon` also starts an independent keepalive loop. It sends HTTP `GET` requests to each configured URL every `[keepalive].interval` seconds with `[keepalive].timeout` seconds per request. Keepalive failures are logged as warnings and do not fail the daemon or the onair cycle.
+When `[keepalive].enabled = true` and `[keepalive].urls` is not empty, `daemon` also starts an independent keepalive loop. It sends HTTP `GET` requests to each configured URL every `[keepalive].interval` seconds with `[keepalive].timeout` seconds per request. HTTP 2xx and 3xx responses are treated as success. HTTP 4xx, HTTP 5xx, timeout, and network failures are logged as warnings and do not fail the daemon or the onair cycle.
 
 ```toml
 [keepalive]
@@ -514,6 +577,11 @@ cargo run -- doctor --config ./voicepipe.sample.toml
 - `make onair`: run the upstream-to-downstream orchestration workflow
 - `make daemon`: run `voicepipe daemon`
 - `make daemon-once`: run `voicepipe daemon --once`
+- `make docker-build`: build the Docker image
+- `make docker-up`: start `voicepipe` and `voicevox` with Docker Compose
+- `make docker-down`: stop Docker Compose services
+- `make docker-logs`: follow Docker Compose logs
+- `make docker-restart`: restart Docker Compose services
 - `make preview`: render a short preview with `INPUT`, `PREVIEW_OUTPUT`, and `PREVIEW_WORKDIR`
 - `make speakers`: list VOICEVOX speakers and styles
 - `make doctor`: validate local prerequisites

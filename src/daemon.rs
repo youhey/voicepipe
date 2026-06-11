@@ -21,19 +21,24 @@ use crate::{
 };
 
 pub async fn run(args: DaemonArgs) -> Result<()> {
-    if args.interval == 0 {
+    let loaded_config = config::load(args.config.as_deref())?;
+    loaded_config.values.validate()?;
+    let interval = args
+        .interval
+        .unwrap_or(loaded_config.values.daemon.interval);
+    if interval == 0 {
         bail!("--interval は 1 以上を指定してください");
     }
 
-    validate_environment(&args).await?;
+    validate_environment(&loaded_config.values).await?;
 
     println!("voicepipe daemon started");
-    println!("interval={}", args.interval);
+    println!("interval={interval}");
 
-    let config = config::load(args.config.as_deref())?.values;
     let shutdown = Shutdown::new();
     shutdown.listen();
-    let keepalive_handle = start_keepalive(config.keepalive.clone(), shutdown.clone())?;
+    let keepalive_handle =
+        start_keepalive(loaded_config.values.keepalive.clone(), shutdown.clone())?;
 
     loop {
         println!("running onair cycle...");
@@ -45,9 +50,9 @@ pub async fn run(args: DaemonArgs) -> Result<()> {
             break;
         }
 
-        println!("sleeping {} seconds", args.interval);
+        println!("sleeping {interval} seconds");
         tokio::select! {
-            () = sleep(Duration::from_secs(args.interval)) => {}
+            () = sleep(Duration::from_secs(interval)) => {}
             () = shutdown.notified() => {
                 break;
             }
@@ -101,7 +106,9 @@ fn start_keepalive(
 async fn run_keepalive_once(client: &reqwest::Client, urls: &[String]) {
     for url in urls {
         match client.get(url).send().await {
-            Ok(response) if response.status().is_success() => {
+            Ok(response)
+                if response.status().is_success() || response.status().is_redirection() =>
+            {
                 println!("keepalive ok: {url}");
             }
             Ok(response) => {
@@ -117,12 +124,8 @@ async fn run_keepalive_once(client: &reqwest::Client, urls: &[String]) {
     }
 }
 
-async fn validate_environment(args: &DaemonArgs) -> Result<()> {
-    let loaded = config::load(args.config.as_deref())?;
-    loaded.values.validate()?;
-
-    let upstream_url = loaded
-        .values
+async fn validate_environment(config: &ResolvedConfig) -> Result<()> {
+    let upstream_url = config
         .upstream_episode_url
         .as_deref()
         .context("daemon には [upstream].episode_url が必要です")?;
@@ -131,19 +134,20 @@ async fn validate_environment(args: &DaemonArgs) -> Result<()> {
     ffmpeg::ensure_probe_available()?;
 
     let voicevox = VoicevoxClient::new(
-        loaded.values.voicevox_endpoint.clone(),
-        loaded.values.speaker,
-        loaded.values.voice.clone(),
+        config.voicevox_endpoint.clone(),
+        config.speaker,
+        config.voice.clone(),
     );
-    voicevox.ensure_ready().await?;
+    if let Err(error) = voicevox.ensure_ready().await {
+        println!("warning: daemon 起動前の VOICEVOX 到達確認に失敗しました: {error:#}");
+    }
 
-    let upstream = UpstreamClient::new(resolve_upstream_access_token(&loaded.values));
-    upstream
-        .list_episodes(upstream_url)
-        .await
-        .context("daemon 起動前の upstream 到達確認に失敗しました")?;
+    let upstream = UpstreamClient::new(resolve_upstream_access_token(config));
+    if let Err(error) = upstream.list_episodes(upstream_url).await {
+        println!("warning: daemon 起動前の upstream 到達確認に失敗しました: {error:#}");
+    }
 
-    ensure_sqlite_writable(&loaded.values.onair_database)?;
+    ensure_sqlite_writable(&config.onair_database)?;
     ensure_directory_writable(Path::new("dist"))?;
     ensure_directory_writable(Path::new("work"))?;
 

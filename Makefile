@@ -10,6 +10,7 @@ PREVIEW_OUTPUT ?= dist/preview/preview.mp3
 PREVIEW_WORKDIR ?= work/preview
 
 .PHONY: build run onair daemon daemon-once preview speakers doctor test audit fmt fmt-check clippy clean check
+.PHONY: docker-build docker-up docker-down docker-logs docker-restart
 .PHONY: voicevox-up voicevox-down voicevox-logs voicevox-status
 
 build:
@@ -64,6 +65,21 @@ clean:
 	cargo clean
 	rm -rf dist/*
 	rm -rf work/*
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f
+
+docker-restart:
+	docker compose restart
 
 voicevox-up:
 	@if docker ps --filter "name=^/$(VOICEVOX_CONTAINER)$$" --format "{{.Names}}" | grep -qx "$(VOICEVOX_CONTAINER)"; then \

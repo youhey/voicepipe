@@ -30,15 +30,6 @@ database = "dist/onair/onair.sqlite"
 episodes_dir = "dist/onair/episodes"
 work_dir = "work/onair"
 
-[keepalive]
-enabled = true
-urls = [
-  "https://upstream.example.com",
-  "https://downstream.example.com",
-]
-interval = 120
-timeout = 10
-
 [storage]
 root_dir = "dist"
 json_dir = "dist/json"

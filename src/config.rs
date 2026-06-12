@@ -47,7 +47,6 @@ pub struct ResolvedConfig {
     pub storage_audio_dir: PathBuf,
     pub storage_preview_dir: PathBuf,
     pub daemon: DaemonConfig,
-    pub keepalive: KeepAliveConfig,
     pub voicevox_endpoint: String,
     pub speaker: u32,
     pub voice: VoiceOptions,
@@ -85,14 +84,6 @@ pub struct DaemonScheduleConfig {
     pub times: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct KeepAliveConfig {
-    pub enabled: bool,
-    pub urls: Vec<String>,
-    pub interval: u64,
-    pub timeout: u64,
-}
-
 #[derive(Debug, Default)]
 pub struct ConfigOverrides {
     pub input: Option<PathBuf>,
@@ -115,7 +106,6 @@ struct FileConfig {
     downstream: Option<FileDownstreamConfig>,
     daemon: Option<FileDaemonConfig>,
     onair: Option<FileOnairConfig>,
-    keepalive: Option<FileKeepAliveConfig>,
     storage: Option<FileStorageConfig>,
     voicevox: Option<FileVoicevoxConfig>,
     voice: Option<FileVoiceConfig>,
@@ -162,14 +152,6 @@ struct FileOnairConfig {
     database: Option<PathBuf>,
     episodes_dir: Option<PathBuf>,
     work_dir: Option<PathBuf>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileKeepAliveConfig {
-    enabled: Option<bool>,
-    urls: Option<Vec<String>>,
-    interval: Option<u64>,
-    timeout: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,7 +203,6 @@ impl Default for ResolvedConfig {
             storage_audio_dir: PathBuf::from("dist/record"),
             storage_preview_dir: PathBuf::from("dist/preview"),
             daemon: DaemonConfig::default(),
-            keepalive: KeepAliveConfig::default(),
             voicevox_endpoint: DEFAULT_VOICEVOX_ENDPOINT.to_string(),
             speaker: DEFAULT_SPEAKER,
             voice: VoiceOptions::default(),
@@ -247,17 +228,6 @@ impl Default for DaemonScheduleConfig {
             enabled: false,
             timezone: "Asia/Tokyo".to_string(),
             times: vec!["09:00".to_string(), "14:00".to_string()],
-        }
-    }
-}
-
-impl Default for KeepAliveConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            urls: Vec::new(),
-            interval: 300,
-            timeout: 10,
         }
     }
 }
@@ -362,16 +332,6 @@ impl ResolvedConfig {
                 validate_schedule_time(time)?;
             }
         }
-        if self.keepalive.interval == 0 {
-            bail!("keepalive.interval は 1 以上を指定してください");
-        }
-        if self.keepalive.timeout == 0 {
-            bail!("keepalive.timeout は 1 以上を指定してください");
-        }
-        if self.keepalive.urls.iter().any(|url| url.trim().is_empty()) {
-            bail!("keepalive.urls に空の URL は指定できません");
-        }
-
         validate_scale("voice.speed_scale", self.voice.speed_scale)?;
         validate_scale("voice.intonation_scale", self.voice.intonation_scale)?;
         validate_scale("voice.pause_length_scale", self.voice.pause_length_scale)?;
@@ -482,21 +442,6 @@ impl FileConfig {
             }
             if let Some(value) = onair.work_dir {
                 resolved.onair_work_dir = value;
-            }
-        }
-
-        if let Some(keepalive) = self.keepalive {
-            if let Some(value) = keepalive.enabled {
-                resolved.keepalive.enabled = value;
-            }
-            if let Some(value) = keepalive.urls {
-                resolved.keepalive.urls = value;
-            }
-            if let Some(value) = keepalive.interval {
-                resolved.keepalive.interval = value;
-            }
-            if let Some(value) = keepalive.timeout {
-                resolved.keepalive.timeout = value;
             }
         }
 
@@ -677,11 +622,6 @@ mod tests {
             timezone = "Asia/Tokyo"
             times = ["09:00", "14:00"]
 
-            [keepalive]
-            enabled = true
-            urls = ["https://example.com/health"]
-            interval = 60
-            timeout = 5
             "#,
         );
 
@@ -733,13 +673,6 @@ mod tests {
             parsed.daemon.schedule.times,
             vec!["09:00".to_string(), "14:00".to_string()]
         );
-        assert!(parsed.keepalive.enabled);
-        assert_eq!(
-            parsed.keepalive.urls,
-            vec!["https://example.com/health".to_string()]
-        );
-        assert_eq!(parsed.keepalive.interval, 60);
-        assert_eq!(parsed.keepalive.timeout, 5);
     }
 
     #[test]

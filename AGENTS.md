@@ -548,7 +548,6 @@ Do not duplicate onair logic inside scheduling code.
 Use the shared onair workflow and store schedule execution state in SQLite to prevent duplicate runs.
 
 The daemon must remain a thin orchestration layer. Business logic belongs to `record` and `onair`; daemon code must reuse the existing onair workflow, especially `run_onair_once`, and must not duplicate discovery, recording, upload, section duration, or SQLite ledger logic.
-Daemon keepalive is an independent auxiliary loop. It may read `[keepalive]` config and issue HTTP GET requests, but keepalive failures must only produce warnings and must not fail daemon or onair processing.
 
 Do not rewrite existing README/project wording casually. Preserve the chosen naming:
 
